@@ -10,7 +10,7 @@
     <div class="card">
         <div class="header-row">
             <div>
-                <h1 style="font-size:20px;margin-bottom:6px">Secure Messaging App</h1>
+                <h1 style="font-size:20px;margin-bottom:6px">Secure Webchat</h1>
                 <div class="small">Role: <span id="role" class="role-pill">{{ username|capitalize }}</span></div>
             </div>
 
@@ -42,12 +42,12 @@
                             {% endfor %}
                         </select>
                         <div class="toolbar" style="margin-top:8px">
-                            <button id="btnGetPubkey" class="btn btn-primary pill">Get public key</button>
-                            <button id="btnReplacePubkey" class="btn btn-grey pill">Replace (attacker)</button>
+                            <!-- <button id="btnGetPubkey" class="btn btn-primary pill">Get public key</button>-->
+                            <!-- <button id="btnReplacePubkey" class="btn btn-grey pill">Replace (attacker)</button>-->
                         </div>
                     </div>
 
-                    <pre id="pubkeyArea" class="box mono"></pre>
+                    <!-- <pre id="pubkeyArea" class="box mono"></pre>-->
                 </div>
             </div>
 
@@ -110,10 +110,6 @@
                 </div>
             </div>
         </div>
-
-        <footer style="margin-top:12px">
-            <div class="small">Classroom demo — not for production use. Use HTTPS and proper key storage in a real app.</div>
-        </footer>
     </div>
 </div>
 
