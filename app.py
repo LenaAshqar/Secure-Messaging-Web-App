@@ -5,6 +5,7 @@ import hashlib
 import uuid
 import base64
 import encryptionUtility as eu   # cryptographic helpers
+import attackUtility as au       # attack simulations
 from pathlib import Path
 
 app = Flask(__name__, template_folder="templates", static_folder="static")
@@ -51,6 +52,33 @@ def b64e(b: bytes) -> str:
 
 def b64d(s: str) -> bytes:
     return base64.b64decode(s.encode("utf-8"))
+
+
+def ensure_user_keys(username: str):
+    """Make sure the user has signing/ECDH keys; create on demand."""
+    existing = KEY_STORE.get(username)
+    if existing and existing.get("rsa_priv_pem") and existing.get("ecdh_priv_pem"):
+        return
+
+    rsa_priv, rsa_pub = eu.generate_rsa_keypair()
+    ecdh_priv, ecdh_pub = eu.generate_ecdh_keypair()
+
+    KEY_STORE[username] = {
+        "rsa_priv_pem": eu.serialize_private_key_to_pem(rsa_priv).decode(),
+        "rsa_pub_pem": eu.serialize_public_key_to_pem(rsa_pub).decode(),
+        "ecdh_priv_pem": eu.serialize_private_key_to_pem(ecdh_priv).decode(),
+        "ecdh_pub_pem": eu.serialize_public_key_to_pem(ecdh_pub).decode(),
+    }
+
+    PUBLIC_KEYS.setdefault(username, {})
+    PUBLIC_KEYS[username]["signing"] = KEY_STORE[username]["rsa_pub_pem"]
+    PUBLIC_KEYS[username]["ecdh"] = KEY_STORE[username]["ecdh_pub_pem"]
+    TRUSTED_FINGERPRINTS.setdefault(username, fingerprint_pem(KEY_STORE[username]["rsa_pub_pem"]))
+    app.logger.info(f"[KEYGEN] Generated signing/ECDH keys for {username} automatically.")
+
+
+for default_user in VALID_USERS:
+    ensure_user_keys(default_user)
 
 
 def make_transport_bundle(ct, nonce, esk, wrap_nonce, signature, sender_pub_pem, sender_ecdh_pub_pem, timestamp, message_id):
@@ -130,18 +158,8 @@ def login():
     session["username"] = username
     session["login_time"] = datetime.utcnow().isoformat()
 
-    # Generate signing + ECDH keypairs for this user's session (server-side)
-    rsa_priv, rsa_pub = eu.generate_rsa_keypair()
-    ecdh_priv, ecdh_pub = eu.generate_ecdh_keypair()
-
-    KEY_STORE[username] = {
-        "rsa_priv_pem": eu.serialize_private_key_to_pem(rsa_priv).decode(),
-        "rsa_pub_pem": eu.serialize_public_key_to_pem(rsa_pub).decode(),
-        "ecdh_priv_pem": eu.serialize_private_key_to_pem(ecdh_priv).decode(),
-        "ecdh_pub_pem": eu.serialize_public_key_to_pem(ecdh_pub).decode()
-    }
-
-    app.logger.info(f"[LOGIN] {username} logged in; signing and ECDH keys generated.")
+    ensure_user_keys(username)
+    app.logger.info(f"[LOGIN] {username} logged in; signing and ECDH keys ready.")
     return redirect(url_for("app_page"))
 
 
@@ -161,31 +179,6 @@ def app_page():
 # -------------------------------------------------------
 # KEY MANAGEMENT
 # -------------------------------------------------------
-@app.route("/generate_keys", methods=["POST"])
-def generate_keys():
-    if not session.get("logged_in"):
-        return jsonify({"error": "not logged in"}), 403
-
-    username = session["username"]
-
-    rsa_priv, rsa_pub = eu.generate_rsa_keypair()
-    ecdh_priv, ecdh_pub = eu.generate_ecdh_keypair()
-
-    KEY_STORE[username] = {
-        "rsa_priv_pem": eu.serialize_private_key_to_pem(rsa_priv).decode(),
-        "rsa_pub_pem": eu.serialize_public_key_to_pem(rsa_pub).decode(),
-        "ecdh_priv_pem": eu.serialize_private_key_to_pem(ecdh_priv).decode(),
-        "ecdh_pub_pem": eu.serialize_public_key_to_pem(ecdh_pub).decode()
-    }
-    app.logger.info(f"[KEYGEN] {username} regenerated signing and ECDH keys.")
-
-    return jsonify({
-        "ok": True,
-        "signing_pub_pem": KEY_STORE[username]["rsa_pub_pem"],
-        "ecdh_pub_pem": KEY_STORE[username]["ecdh_pub_pem"]
-    })
-
-
 @app.route("/register/<username>", methods=["POST"])
 def register_pubkey(username):
     if not session.get("logged_in"):
@@ -241,6 +234,7 @@ def my_pubkey():
         return jsonify({"error": "not logged in"}), 403
 
     username = session["username"]
+    ensure_user_keys(username)
     pub_sign = KEY_STORE[username]["rsa_pub_pem"]
     pub_ecdh = KEY_STORE[username]["ecdh_pub_pem"]
     return jsonify({
@@ -275,6 +269,7 @@ def api_encrypt():
 
         # Load keys
         sender = session["username"]
+        ensure_user_keys(sender)
         sender_priv_pem = KEY_STORE[sender]["rsa_priv_pem"]
         sender_priv = eu.load_private_key_from_pem(sender_priv_pem.encode())
         sender_pub_pem = KEY_STORE[sender]["rsa_pub_pem"]
@@ -336,6 +331,7 @@ def api_decrypt():
         bundle = parse_transport_bundle(raw)
 
         receiver = session["username"]
+        ensure_user_keys(receiver)
         receiver_ecdh_priv = eu.load_private_key_from_pem(KEY_STORE[receiver]["ecdh_priv_pem"].encode())
 
         sender_pub_pem = bundle["sender_pub_pem"]
@@ -405,44 +401,20 @@ def roundtrip():
 # -------------------------------------------------------
 
 
-def _load_dictionary_words():
-    dict_path = Path(__file__).parent / "test.txt"
-    if not dict_path.exists():
-        return []
-    return [w.strip() for w in dict_path.read_text().splitlines() if w.strip()]
-
-
 @app.route("/simulate/dictionary", methods=["GET"])
 def simulate_dictionary():
     if not session.get("logged_in"):
         return jsonify({"error": "not logged in"}), 403
 
     target = request.args.get("target", session.get("username", "alice"))
-    words = _load_dictionary_words()
-    attempted = words[:25]
-    found = False
-    for w in attempted:
-        if USER_CREDENTIALS.get(target) == w:
-            found = True
-            break
+    result = au.dictionary_attack(target, USER_CREDENTIALS, LOGIN_ATTEMPTS, Path(__file__).parent / "test.txt")
 
-    LOGIN_ATTEMPTS[target] = LOGIN_ATTEMPTS.get(target, 0) + len(attempted)
-    detected = found or LOGIN_ATTEMPTS[target] > 8
-
-    if detected:
-        app.logger.warning(f"[ATTACK] Dictionary attack detected targeting {target}; attempts={LOGIN_ATTEMPTS[target]}")
+    if result["detected"]:
+        app.logger.warning(f"[ATTACK] Dictionary attack detected targeting {target}; attempts={result['attempts_recorded']}")
     else:
         app.logger.info(f"[ATTACK] Dictionary simulation against {target}; no matches found")
 
-    return jsonify({
-        "attack": "dictionary",
-        "target": target,
-        "checked_words": attempted,
-        "password_matched": found,
-        "detected": detected,
-        "message": "Credential stuffing blocked" if detected else "Monitoring guesses",
-        "attempts_recorded": LOGIN_ATTEMPTS[target]
-    })
+    return jsonify(result)
 
 
 @app.route("/simulate/forgery", methods=["GET"])
@@ -450,45 +422,13 @@ def simulate_forgery():
     if not session.get("logged_in"):
         return jsonify({"error": "not logged in"}), 403
 
-    # create or reuse a stored message bundle to tamper with
-    bundle = None
-    if MESSAGES:
-        bundle = parse_transport_bundle(MESSAGES[-1]["bundle"])
-    else:
-        # fabricate a single bundle just for the test
-        fake_key = eu.generate_aes_key()
-        ct, nonce = eu.encrypt_message_with_key(b"tamper", fake_key)
-        enc_key, wrap_nonce, sender_ecdh = eu.encrypt_session_key_ecdh(*eu.generate_ecdh_keypair(), fake_key)
-        rsa_priv, rsa_pub = eu.generate_rsa_keypair()
-        sig = eu.sign_bytes_rsa(rsa_priv, ct + nonce + enc_key + wrap_nonce + sender_ecdh)
-        bundle = {
-            "ciphertext": ct,
-            "nonce": nonce,
-            "enc_session_key": enc_key,
-            "wrap_nonce": wrap_nonce,
-            "signature": sig,
-            "sender_pub_pem": eu.serialize_public_key_to_pem(rsa_pub).decode(),
-            "sender_ecdh_pub_pem": sender_ecdh.decode(),
-            "timestamp": datetime.utcnow().isoformat(),
-            "message_id": "forgery-demo",
-        }
-
-    sender_pub = eu.load_public_key_from_pem(bundle["sender_pub_pem"].encode())
-    forged_signature = b"\x00" * len(bundle["signature"])  # blatantly invalid
-    verified = eu.verify_signature_rsa(sender_pub, forged_signature, signing_material_from_bundle(bundle))
-
-    detected = not verified
-    if detected:
+    result = au.forged_signature_attack(MESSAGES)
+    if result["detected"]:
         app.logger.warning("[ATTACK] Forged signature rejected by verifier")
     else:
         app.logger.info("[ATTACK] Forgery slipped through (unexpected)")
 
-    return jsonify({
-        "attack": "forged_signature",
-        "detected": detected,
-        "signature_valid": verified,
-        "message": "Forgery blocked by signature verification" if detected else "Forgery went unnoticed",
-    })
+    return jsonify(result)
 
 
 @app.route("/simulate/phishing", methods=["GET"])
@@ -496,37 +436,21 @@ def simulate_phishing():
     if not session.get("logged_in"):
         return jsonify({"error": "not logged in"}), 403
 
-    lure = {
-        "from": "it-support@example.com",
-        "body": "Please reset your password at http://evil.example/reset",
-        "indicator": "Untrusted domain",
-    }
-    app.logger.warning(f"[ATTACK] Phishing lure flagged ({lure['indicator']})")
-    return jsonify({
-        "attack": "phishing",
-        "detected": True,
-        "message": "Suspicious domain detected. User warned and link disabled.",
-        "lure": lure
-    })
+    result = au.phishing_attack()
+    app.logger.warning(f"[ATTACK] Phishing lure flagged ({result['lure']['indicator']})")
+    return jsonify(result)
 
 
 @app.route("/simulate/dos", methods=["GET"])
 def simulate_dos():
-    global DOS_COUNTER
-    DOS_COUNTER += 1
-    alert = DOS_COUNTER >= 5
+    result, alert = au.dos_attack()
     if alert:
-        app.logger.warning(f"[ATTACK] DoS burst count={DOS_COUNTER} (threshold=5) — throttling engaged")
+        app.logger.warning(f"[ATTACK] DoS burst count={result['requests_seen']} (threshold={au.DOS_THRESHOLD}) — throttling engaged")
     else:
-        app.logger.info(f"[ATTACK] DoS burst count={DOS_COUNTER}")
+        app.logger.info(f"[ATTACK] DoS burst count={result['requests_seen']}")
 
     status = 429 if alert else 200
-    return jsonify({
-        "attack": "denial_of_service",
-        "requests_seen": DOS_COUNTER,
-        "detected": alert,
-        "message": "Rate limit engaged" if alert else "Monitoring traffic volume"
-    }), status
+    return jsonify(result), status
 
 
 # -------------------------------------------------------
