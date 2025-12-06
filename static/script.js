@@ -140,27 +140,28 @@ document.addEventListener('DOMContentLoaded', () => {
     };
 
     btnDictionary.onclick = async () => {
-        const r = await getJSON('/simulate/dictionary');
+        const target = document.getElementById('otherUser').value;
+        const r = await getJSON(`/simulate/dictionary?target=${encodeURIComponent(target)}`);
         attackOutput.textContent = JSON.stringify(r.json, null, 2);
-        log('Dictionary attack simulated.');
+        log(r.ok ? `Dictionary attack against ${target} detected: ${r.json.detected}` : 'Dictionary simulation failed');
     };
 
     btnForge.onclick = async () => {
         const r = await getJSON('/simulate/forgery');
         attackOutput.textContent = JSON.stringify(r.json, null, 2);
-        log('Forgery attempt checked.');
+        log(r.ok ? 'Forgery attempt verified and blocked.' : 'Forgery simulation failed');
     };
 
     btnPhishing.onclick = async () => {
         const r = await getJSON('/simulate/phishing');
         attackOutput.textContent = JSON.stringify(r.json, null, 2);
-        log('Phishing scenario displayed.');
+        log(r.ok ? 'Phishing lure flagged for warning.' : 'Phishing simulation failed');
     };
 
     btnDos.onclick = async () => {
         const r = await getJSON('/simulate/dos');
         attackOutput.textContent = JSON.stringify(r.json, null, 2);
-        log('DoS burst simulated.');
+        log(r.ok ? `DoS burst count ${r.json.requests_seen}` : 'DoS simulation throttled');
     };
 
 });
