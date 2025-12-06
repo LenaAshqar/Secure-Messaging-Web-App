@@ -21,7 +21,6 @@ function log(msg) {
 }
 
 document.addEventListener('DOMContentLoaded', () => {
-    const btnGenKeys = document.getElementById('btnGenKeys');
     const btnMyPubkey = document.getElementById('btnMyPubkey');
     const btnRegisterMyKey = document.getElementById('btnRegisterMyKey');
     const btnGetPubkey = document.getElementById('btnGetPubkey');
@@ -42,15 +41,6 @@ document.addEventListener('DOMContentLoaded', () => {
     const btnForge = document.getElementById('btnForge');
     const btnPhishing = document.getElementById('btnPhishing');
     const btnDos = document.getElementById('btnDos');
-
-    btnGenKeys.onclick = async () => {
-        const r = await postJSON('/generate_keys', {});
-        if (r.ok) {
-            log('Generated new keypair for session');
-        } else {
-            log('Failed to generate keys: ' + (r.json.error || JSON.stringify(r.json)));
-        }
-    };
 
     btnMyPubkey.onclick = async () => {
         const r = await getJSON('/my_pubkey');

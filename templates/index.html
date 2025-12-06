@@ -29,7 +29,6 @@
                 <div style="margin-bottom:10px"><strong>Key Management</strong></div>
                 <div class="panel" style="display:flex;flex-direction:column;gap:10px;margin-bottom:12px">
                     <div class="row">
-                        <button id="btnGenKeys" class="btn btn-indigo pill">Generate new keypair</button>
                         <button id="btnMyPubkey" class="btn btn-primary pill">Show my public key</button>
                         <button id="btnRegisterMyKey" class="btn btn-grey pill">Register my key</button>
                     </div>
@@ -80,7 +79,7 @@
                     </div>
 
                     <div>
-                        <label>Latest ciphertext (AES-256-GCM)</label>
+                        <label>Latest ciphertext (ChaCha20-Poly1305)</label>
                         <pre id="ciphertextDisplay" class="box mono"></pre>
                     </div>
                 </div>

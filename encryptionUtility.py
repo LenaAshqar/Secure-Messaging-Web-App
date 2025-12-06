@@ -1,37 +1,37 @@
 """Cryptographic helpers for the secure messaging demo.
 
-This module centralises symmetric encryption (AES-256-GCM),
-key exchange (ECDH + AES-GCM wrapping) and digital signatures (RSA-PSS).
-All helpers are intentionally small wrappers around ``cryptography`` primitives
-to keep the Flask views readable.
+This module centralises symmetric encryption (ChaCha20-Poly1305 for content
+confidentiality), key exchange (ECDH + AES-GCM wrapping) and digital signatures
+(RSA-PSS). All helpers are intentionally small wrappers around ``cryptography``
+primitives to keep the Flask views readable.
 """
 
 import os
 import base64
-from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM, ChaCha20Poly1305
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import ec, rsa, padding as asym_padding
 from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 
 
-# ----- Symmetric message encryption using AES-256-GCM -----
-def generate_aes_key() -> bytes:
-    """Return a fresh 256-bit AES key for content encryption."""
-    return AESGCM.generate_key(bit_length=256)
+# ----- Symmetric message encryption using ChaCha20-Poly1305 -----
+def generate_chacha_key() -> bytes:
+    """Return a fresh 256-bit ChaCha20-Poly1305 key for content encryption."""
+    return ChaCha20Poly1305.generate_key()
 
 
 def encrypt_message_with_key(plaintext: bytes, key: bytes, aad: bytes | None = None):
-    """Encrypt ``plaintext`` with AES-256-GCM and return (ciphertext, nonce)."""
+    """Encrypt ``plaintext`` with ChaCha20-Poly1305 and return (ciphertext, nonce)."""
     nonce = os.urandom(12)
-    aes = AESGCM(key)
-    ciphertext = aes.encrypt(nonce, plaintext, aad)
+    cipher = ChaCha20Poly1305(key)
+    ciphertext = cipher.encrypt(nonce, plaintext, aad)
     return ciphertext, nonce
 
 
 def decrypt_message_with_key(ciphertext: bytes, nonce: bytes, key: bytes, aad: bytes | None = None):
-    """Decrypt AES-256-GCM ciphertext and return the original plaintext."""
-    aes = AESGCM(key)
-    plaintext = aes.decrypt(nonce, ciphertext, aad)
+    """Decrypt ChaCha20-Poly1305 ciphertext and return the original plaintext."""
+    cipher = ChaCha20Poly1305(key)
+    plaintext = cipher.decrypt(nonce, ciphertext, aad)
     return plaintext
 
 
