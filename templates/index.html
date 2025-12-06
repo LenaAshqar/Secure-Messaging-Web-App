@@ -78,6 +78,11 @@
                         <label>Transport bundle (copy/paste)</label>
                         <textarea id="transport" class="box mono" rows="6"></textarea>
                     </div>
+
+                    <div>
+                        <label>Latest ciphertext (AES-256-GCM)</label>
+                        <pre id="ciphertextDisplay" class="box mono"></pre>
+                    </div>
                 </div>
             </div>
 
@@ -95,7 +100,22 @@
                     <div>
                         <label>Plaintext output</label>
                         <pre id="plaintextOut" class="box mono"></pre>
+                        <div id="signatureStatus" class="small"></div>
                     </div>
+                </div>
+            </div>
+
+            <!-- Attacks & detections -->
+            <div class="area-attacks">
+                <div style="margin-bottom:10px"><strong>Attack simulations</strong></div>
+                <div class="panel" style="display:flex;flex-direction:column;gap:10px">
+                    <div class="toolbar">
+                        <button id="btnDictionary" class="btn btn-grey pill">Dictionary attack</button>
+                        <button id="btnForge" class="btn btn-indigo pill">Forge signature</button>
+                        <button id="btnPhishing" class="btn btn-primary pill">Phishing attempt</button>
+                        <button id="btnDos" class="btn btn-grey pill">DoS burst</button>
+                    </div>
+                    <pre id="attackOutput" class="box-wide mono"></pre>
                 </div>
             </div>
 
