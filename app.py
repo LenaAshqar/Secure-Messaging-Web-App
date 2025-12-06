@@ -25,9 +25,6 @@ DOS_COUNTER = 0
 
 VALID_USERS = ["alice", "bob", "mallory"]
 
-# Toggle this TRUE if you want MITM to succeed anyway
-ALLOW_UNPINNED = False
-
 
 # -------------------------------------------------------
 # Helpers
@@ -319,17 +316,6 @@ def api_decrypt():
         sender_pub_pem = bundle["sender_pub_pem"]
         sender_pub = eu.load_public_key_from_pem(sender_pub_pem.encode())
         sender_ecdh_pub = eu.load_public_key_from_pem(bundle["sender_ecdh_pub_pem"].encode())
-
-        # MITM detection (fingerprint mismatch)
-        sender_fp = fingerprint_pem(sender_pub_pem)
-        sender_name = raw.get("from")  # optional if you want to store it
-
-        if sender_name in TRUSTED_FINGERPRINTS:
-            if sender_fp != TRUSTED_FINGERPRINTS[sender_name]:
-                if not ALLOW_UNPINNED:
-                    return jsonify({"error": "MITM DETECTED (fingerprint mismatch)"}), 400
-                else:
-                    app.logger.warning("[MITM IGNORED] unpinned mode")
 
         # Verify signature
         signing_material = signing_material_from_bundle(bundle)
