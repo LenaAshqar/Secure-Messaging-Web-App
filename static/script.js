@@ -21,7 +21,6 @@ function log(msg) {
 }
 
 document.addEventListener('DOMContentLoaded', () => {
-    const btnGenKeys = document.getElementById('btnGenKeys');
     const btnMyPubkey = document.getElementById('btnMyPubkey');
     const btnRegisterMyKey = document.getElementById('btnRegisterMyKey');
     const btnGetPubkey = document.getElementById('btnGetPubkey');
@@ -35,37 +34,36 @@ document.addEventListener('DOMContentLoaded', () => {
     const toUser = document.getElementById('toUser');
     const received = document.getElementById('received');
     const plaintextOut = document.getElementById('plaintextOut');
-
-    const messages = document.getElementById('messages');
-
-    btnGenKeys.onclick = async () => {
-        const r = await postJSON('/generate_keys', {});
-        if (r.ok) {
-            log('Generated new keypair for session');
-        } else {
-            log('Failed to generate keys: ' + (r.json.error || JSON.stringify(r.json)));
-        }
-    };
+    const ciphertextDisplay = document.getElementById('ciphertextDisplay');
+    const signatureStatus = document.getElementById('signatureStatus');
+    const attackOutput = document.getElementById('attackOutput');
+    const btnDictionary = document.getElementById('btnDictionary');
+    const btnForge = document.getElementById('btnForge');
+    const btnPhishing = document.getElementById('btnPhishing');
+    const btnDos = document.getElementById('btnDos');
 
     btnMyPubkey.onclick = async () => {
         const r = await getJSON('/my_pubkey');
         if (r.ok) {
-            pubkeyArea.textContent = r.json.pub_pem + '\nFingerprint: ' + r.json.fingerprint;
-            log('Displayed my public key.');
+            pubkeyArea.textContent = 'Signing key:\n' + r.json.signing_pub_pem + '\n\nECDH key:\n' + r.json.ecdh_pub_pem + '\nFingerprint: ' + r.json.fingerprint;
+            log('Displayed my public keys.');
         } else {
             pubkeyArea.textContent = JSON.stringify(r.json);
         }
     };
 
     btnRegisterMyKey.onclick = async () => {
-        // fetch my pubkey first then register under my username
+        // fetch my pubkeys first then register under my username
         const my = await getJSON('/my_pubkey');
-        if (!my.ok) { log('Could not get my pubkey'); return; }
+        if (!my.ok) { log('Could not get my pubkeys'); return; }
         // username is shown on page
         const role = document.getElementById('role').textContent.trim().toLowerCase();
-        const r = await postJSON(`/register/${role}`, { pub_pem: my.json.pub_pem });
+        const r = await postJSON(`/register/${role}`, {
+            signing_pub_pem: my.json.signing_pub_pem,
+            ecdh_pub_pem: my.json.ecdh_pub_pem
+        });
         if (r.ok) {
-            log(`Registered my public key as ${role} (fingerprint ${r.json.fingerprint})`);
+            log(`Registered my public keys as ${role} (fingerprint ${r.json.fingerprint})`);
         } else {
             log('Register failed: ' + JSON.stringify(r.json));
         }
@@ -75,8 +73,8 @@ document.addEventListener('DOMContentLoaded', () => {
         const other = document.getElementById('otherUser').value;
         const r = await getJSON(`/pubkey/${other}`);
         if (r.ok) {
-            pubkeyArea.textContent = r.json.pub_pem + '\nFingerprint: ' + r.json.fingerprint;
-            log(`Fetched public key for ${other}`);
+            pubkeyArea.textContent = 'Signing key:\n' + r.json.pub_pem.signing + '\n\nECDH key:\n' + r.json.pub_pem.ecdh + '\nFingerprint: ' + r.json.fingerprint;
+            log(`Fetched public keys for ${other}`);
         } else {
             pubkeyArea.textContent = JSON.stringify(r.json);
             log('Fetch failed: ' + JSON.stringify(r.json));
@@ -87,8 +85,11 @@ document.addEventListener('DOMContentLoaded', () => {
         const other = document.getElementById('otherUser').value;
         // Attacker will replace other user's key with attacker's own key (session)
         const my = await getJSON('/my_pubkey');
-        if (!my.ok) { log('Could not get my pubkey'); return; }
-        const r = await postJSON(`/replace_pubkey/${other}`, { pub_pem: my.json.pub_pem });
+        if (!my.ok) { log('Could not get my pubkeys'); return; }
+        const r = await postJSON(`/replace_pubkey/${other}`, {
+            signing_pub_pem: my.json.signing_pub_pem,
+            ecdh_pub_pem: my.json.ecdh_pub_pem
+        });
         if (r.ok) {
             log(`Replaced ${other}'s public key in directory with my key (MITM simulation). New fingerprint: ${r.json.new_fingerprint}`);
         } else {
@@ -104,6 +105,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (r.ok) {
             // place the full bundle in transport box (copy/paste between windows)
             transport.value = JSON.stringify(r.json, null, 2);
+            ciphertextDisplay.textContent = r.json.ciphertext || '';
             log(`Created transport bundle for ${to}. Message id: ${r.json.message_id || 'n/a'}`);
         } else {
             log('Encrypt error: ' + JSON.stringify(r.json));
@@ -118,21 +120,38 @@ document.addEventListener('DOMContentLoaded', () => {
         const r = await postJSON('/decrypt', obj);
         if (r.ok) {
             plaintextOut.textContent = r.json.plaintext + '\n\n(ts: ' + (r.json.timestamp || '') + ', id: ' + (r.json.message_id || '') + ')';
+            signatureStatus.textContent = r.json.signature_valid ? 'Signature verified (integrity/authentication OK)' : 'Signature verification failed';
             log('Decryption success');
         } else {
             plaintextOut.textContent = '';
+            signatureStatus.textContent = 'Signature verification failed or bundle invalid.';
             log('Decrypt error: ' + JSON.stringify(r.json));
         }
     };
 
-    btnListMessages.onclick = async () => {
-        const r = await getJSON('/messages');
-        if (r.ok) {
-            messages.textContent = JSON.stringify(r.json.messages, null, 2);
-            log('Fetched message store (attacker view).');
-        } else {
-            messages.textContent = JSON.stringify(r.json);
-        }
+    btnDictionary.onclick = async () => {
+        const target = document.getElementById('otherUser').value;
+        const r = await getJSON(`/simulate/dictionary?target=${encodeURIComponent(target)}`);
+        attackOutput.textContent = JSON.stringify(r.json, null, 2);
+        log(r.ok ? `Dictionary attack against ${target} detected: ${r.json.detected}` : 'Dictionary simulation failed');
+    };
+
+    btnForge.onclick = async () => {
+        const r = await getJSON('/simulate/forgery');
+        attackOutput.textContent = JSON.stringify(r.json, null, 2);
+        log(r.ok ? 'Forgery attempt verified and blocked.' : 'Forgery simulation failed');
+    };
+
+    btnPhishing.onclick = async () => {
+        const r = await getJSON('/simulate/phishing');
+        attackOutput.textContent = JSON.stringify(r.json, null, 2);
+        log(r.ok ? 'Phishing lure flagged for warning.' : 'Phishing simulation failed');
+    };
+
+    btnDos.onclick = async () => {
+        const r = await getJSON('/simulate/dos');
+        attackOutput.textContent = JSON.stringify(r.json, null, 2);
+        log(r.ok ? `DoS burst count ${r.json.requests_seen}` : 'DoS simulation throttled');
     };
 
 });

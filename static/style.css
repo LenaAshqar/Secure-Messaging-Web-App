@@ -59,7 +59,7 @@ h1{
 /* ========= GRID  ========= */
 /*  key management (full width) then
     two columns (left=key+compose, right=receive)
-    then messages row (full width), then logs row (full width) */
+    then attack simulations row (full width), then logs row (full width) */
 .grid {
     display: grid;
     grid-template-columns: 1fr 1fr;
@@ -69,7 +69,7 @@ h1{
     "keys keys"
     "left right"
     "left right"
-    "messages messages"
+    "attacks attacks"
     "logs logs";
     align-items: start;
 }
@@ -80,7 +80,7 @@ h1{
       "keys"
       "left"
       "right"
-      "messages"
+      "attacks"
       "logs";
     }
 }
@@ -88,7 +88,7 @@ h1{
 /* child placement */
 .area-left   { grid-area: left; }
 .area-right  { grid-area: right; }
-.area-messages { grid-area: messages; }
+.area-attacks { grid-area: attacks; }
 .area-logs   { grid-area: logs; }
 .area-keys   { grid-area: keys; }
 
