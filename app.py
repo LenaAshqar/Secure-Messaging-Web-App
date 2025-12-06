@@ -280,7 +280,7 @@ def api_encrypt():
         receiver_ecdh_pub = eu.load_public_key_from_pem(receiver_pub["ecdh"].encode())
 
         # Build message
-        session_key = eu.generate_chacha_key()
+        session_key = eu.generate_aes_key()
         ct, nonce = eu.encrypt_message_with_key(
             plaintext.encode(),
             session_key,
