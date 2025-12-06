@@ -11,7 +11,11 @@ This Flask demo shows an end-to-end secure messaging workflow that combines auth
 1. **Generate keys** via the "Generate new keypair" button (signing + ECDH). Register them so other users can fetch verified fingerprints.
 2. **Encrypt** a plaintext to a recipient. The API returns a transport bundle containing ciphertext, IVs, encrypted session key, signature, and sender public keys. The UI shows both the bundle and ciphertext.
 3. **Decrypt** by pasting a transport bundle. The app verifies the signature, derives the shared key to unwrap the AES key, decrypts, and reports signature validity in the UI.
-4. **Attack simulations**: Dedicated buttons trigger dictionary attack, forged signature, phishing, and DoS simulations. The API logs each event and returns warnings so the UI can display them.
+4. **Attack simulations**: Dedicated buttons trigger dictionary attack, forged signature, phishing, and DoS simulations. The API now performs actual checks (credential guessing vs demo passwords, signature tampering attempts, DoS throttling) and returns detection results for the UI.
+
+## Demo login
+- Username/password pairs: `alice`/`purple-alice`, `bob`/`green-bob`, `mallory`/`red-mallory`.
+- Too many failed attempts for the same user will be blocked to mimic dictionary-attack throttling.
 
 ## Logging
 Server logs capture key lifecycle events (generation, encryption, verification, attack detection) to make the security posture visible during demos.

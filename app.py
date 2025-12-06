@@ -1,5 +1,5 @@
 from flask import Flask, render_template, request, session, redirect, url_for, jsonify
-from datetime import datetime
+from datetime import datetime, timedelta
 import logging
 import hashlib
 import uuid
@@ -22,8 +22,15 @@ PUBLIC_KEYS = {}  # username -> {"signing": pem, "ecdh": pem}
 TRUSTED_FINGERPRINTS = {}      # username -> fingerprint of signing key (key pinning)
 MESSAGES = []                  # stored encrypted bundles
 DOS_COUNTER = 0
+LOGIN_ATTEMPTS = {}            # username -> counter to throttle dictionary attack
 
-VALID_USERS = ["alice", "bob", "mallory"]
+USER_CREDENTIALS = {
+    "alice": "purple-alice",
+    "bob": "green-bob",
+    "mallory": "red-mallory",
+}
+
+VALID_USERS = list(USER_CREDENTIALS.keys())
 
 
 # -------------------------------------------------------
@@ -98,12 +105,27 @@ def landing():
 @app.route("/login", methods=["POST"])
 def login():
     username = request.form.get("username", "").strip().lower()
+    password = request.form.get("password", "")
+
     if username not in VALID_USERS:
         return render_template("login.html", users=VALID_USERS, error="Invalid username")
+
+    LOGIN_ATTEMPTS[username] = LOGIN_ATTEMPTS.get(username, 0) + 1
+    if LOGIN_ATTEMPTS[username] > 10:
+        app.logger.warning(f"[LOGIN-BLOCKED] Too many attempts for {username}; possible dictionary attack")
+        return render_template("login.html", users=VALID_USERS, error="Too many attempts detected. Please wait.")
+
+    if USER_CREDENTIALS[username] != password:
+        app.logger.warning(f"[LOGIN-FAIL] Bad password for {username}")
+        return render_template("login.html", users=VALID_USERS, error="Incorrect password")
+
+    # Successful login resets the counter
+    LOGIN_ATTEMPTS[username] = 0
 
     session.clear()
     session["logged_in"] = True
     session["username"] = username
+    session["login_time"] = datetime.utcnow().isoformat()
 
     # Generate signing + ECDH keypairs for this user's session (server-side)
     rsa_priv, rsa_pub = eu.generate_rsa_keypair()
@@ -378,34 +400,99 @@ def _load_dictionary_words():
 
 @app.route("/simulate/dictionary", methods=["GET"])
 def simulate_dictionary():
+    if not session.get("logged_in"):
+        return jsonify({"error": "not logged in"}), 403
+
+    target = request.args.get("target", session.get("username", "alice"))
     words = _load_dictionary_words()
-    attempted = words[:10]
-    app.logger.warning(f"[ATTACK] Dictionary attack simulated with {len(attempted)} candidate words.")
+    attempted = words[:25]
+    found = False
+    for w in attempted:
+        if USER_CREDENTIALS.get(target) == w:
+            found = True
+            break
+
+    LOGIN_ATTEMPTS[target] = LOGIN_ATTEMPTS.get(target, 0) + len(attempted)
+    detected = found or LOGIN_ATTEMPTS[target] > 8
+
+    if detected:
+        app.logger.warning(f"[ATTACK] Dictionary attack detected targeting {target}; attempts={LOGIN_ATTEMPTS[target]}")
+    else:
+        app.logger.info(f"[ATTACK] Dictionary simulation against {target}; no matches found")
+
     return jsonify({
         "attack": "dictionary",
+        "target": target,
         "checked_words": attempted,
-        "detected": True,
-        "message": "Brute-force attempt detected and blocked."
+        "password_matched": found,
+        "detected": detected,
+        "message": "Credential stuffing blocked" if detected else "Monitoring guesses",
+        "attempts_recorded": LOGIN_ATTEMPTS[target]
     })
 
 
 @app.route("/simulate/forgery", methods=["GET"])
 def simulate_forgery():
-    app.logger.warning("[ATTACK] Forged signature attempt detected.")
+    if not session.get("logged_in"):
+        return jsonify({"error": "not logged in"}), 403
+
+    # create or reuse a stored message bundle to tamper with
+    bundle = None
+    if MESSAGES:
+        bundle = parse_transport_bundle(MESSAGES[-1]["bundle"])
+    else:
+        # fabricate a single bundle just for the test
+        fake_key = eu.generate_aes_key()
+        ct, nonce = eu.encrypt_message_with_key(b"tamper", fake_key)
+        enc_key, wrap_nonce, sender_ecdh = eu.encrypt_session_key_ecdh(*eu.generate_ecdh_keypair(), fake_key)
+        rsa_priv, rsa_pub = eu.generate_rsa_keypair()
+        sig = eu.sign_bytes_rsa(rsa_priv, ct + nonce + enc_key + wrap_nonce + sender_ecdh)
+        bundle = {
+            "ciphertext": ct,
+            "nonce": nonce,
+            "enc_session_key": enc_key,
+            "wrap_nonce": wrap_nonce,
+            "signature": sig,
+            "sender_pub_pem": eu.serialize_public_key_to_pem(rsa_pub).decode(),
+            "sender_ecdh_pub_pem": sender_ecdh.decode(),
+            "timestamp": datetime.utcnow().isoformat(),
+            "message_id": "forgery-demo",
+        }
+
+    sender_pub = eu.load_public_key_from_pem(bundle["sender_pub_pem"].encode())
+    forged_signature = b"\x00" * len(bundle["signature"])  # blatantly invalid
+    verified = eu.verify_signature_rsa(sender_pub, forged_signature, signing_material_from_bundle(bundle))
+
+    detected = not verified
+    if detected:
+        app.logger.warning("[ATTACK] Forged signature rejected by verifier")
+    else:
+        app.logger.info("[ATTACK] Forgery slipped through (unexpected)")
+
     return jsonify({
         "attack": "forged_signature",
-        "detected": True,
-        "message": "Signature verification failed. Possible tampering detected."
+        "detected": detected,
+        "signature_valid": verified,
+        "message": "Forgery blocked by signature verification" if detected else "Forgery went unnoticed",
     })
 
 
 @app.route("/simulate/phishing", methods=["GET"])
 def simulate_phishing():
-    app.logger.warning("[ATTACK] Phishing lure blocked before credential submission.")
+    if not session.get("logged_in"):
+        return jsonify({"error": "not logged in"}), 403
+
+    lure = {
+        "from": "it-support@example.com",
+        "body": "Please reset your password at http://evil.example/reset",
+        "indicator": "Untrusted domain",
+    }
+    app.logger.warning(f"[ATTACK] Phishing lure flagged ({lure['indicator']})")
     return jsonify({
         "attack": "phishing",
         "detected": True,
-        "message": "A phishing message was detected. Do not share your keys or passwords."
+        "message": "Suspicious domain detected. User warned and link disabled.",
+        "lure": lure
     })
 
 
@@ -414,13 +501,18 @@ def simulate_dos():
     global DOS_COUNTER
     DOS_COUNTER += 1
     alert = DOS_COUNTER >= 5
-    app.logger.warning(f"[ATTACK] DoS burst count={DOS_COUNTER} (threshold=5).")
+    if alert:
+        app.logger.warning(f"[ATTACK] DoS burst count={DOS_COUNTER} (threshold=5) — throttling engaged")
+    else:
+        app.logger.info(f"[ATTACK] DoS burst count={DOS_COUNTER}")
+
+    status = 429 if alert else 200
     return jsonify({
         "attack": "denial_of_service",
         "requests_seen": DOS_COUNTER,
         "detected": alert,
         "message": "Rate limit engaged" if alert else "Monitoring traffic volume"
-    })
+    }), status
 
 
 # -------------------------------------------------------

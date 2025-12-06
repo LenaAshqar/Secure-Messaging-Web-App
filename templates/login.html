@@ -18,10 +18,12 @@
 
         <form action="{{ url_for('login') }}" method="POST" class="form">
             <label for="username">Username / اسم المستخدم</label>
-            <input id="username" name="username" type="text" placeholder="e.g., admin" required>
+            <input id="username" name="username" type="text" placeholder="alice" required>
 
             <label for="password">Password / كلمة المرور</label>
-            <input id="password" name="password" type="password" placeholder="••••••••" required>
+            <input id="password" name="password" type="password" placeholder="purple-alice" required>
+
+            <div class="small" style="margin:-8px 0 10px 0">Demo credentials: alice/purple-alice, bob/green-bob, mallory/red-mallory</div>
 
             <button class="btn pill btn-primary" type="submit">Login</button>
         </form>
