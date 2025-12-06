@@ -1,0 +1,122 @@
+<!doctype html>
+<html>
+<head>
+    <meta charset="utf-8" />
+    <title>Secure Messaging Demo</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+<div class="wrap">
+    <div class="card">
+        <div class="header-row">
+            <div>
+                <h1 style="font-size:20px;margin-bottom:6px">Secure Messaging App</h1>
+                <div class="small">Role: <span id="role" class="role-pill">{{ username|capitalize }}</span></div>
+            </div>
+
+            <div class="row">
+                <form id="logoutForm" action="{{ url_for('logout') }}" method="post" style="display:inline;">
+                    <button class="btn btn-grey pill" type="submit">Logout</button>
+                </form>
+            </div>
+        </div>
+
+        <!-- main grid  -->
+        <div class="grid">
+
+            <!-- key management -->
+            <div class="area-keys">
+                <div style="margin-bottom:10px"><strong>Key Management</strong></div>
+                <div class="panel" style="display:flex;flex-direction:column;gap:10px;margin-bottom:12px">
+                    <div class="row">
+                        <button id="btnGenKeys" class="btn btn-indigo pill">Generate new keypair</button>
+                        <button id="btnMyPubkey" class="btn btn-primary pill">Show my public key</button>
+                        <button id="btnRegisterMyKey" class="btn btn-grey pill">Register my key</button>
+                    </div>
+
+                    <div>
+                        <label for="otherUser">Other user</label>
+                        <select id="otherUser">
+                            {% for u in users %}
+                            <option value="{{ u }}">{{ u|capitalize }}</option>
+                            {% endfor %}
+                        </select>
+                        <div class="toolbar" style="margin-top:8px">
+                            <button id="btnGetPubkey" class="btn btn-primary pill">Get public key</button>
+                            <button id="btnReplacePubkey" class="btn btn-grey pill">Replace (attacker)</button>
+                        </div>
+                    </div>
+
+                    <pre id="pubkeyArea" class="box mono"></pre>
+                </div>
+            </div>
+
+
+            <!-- LEFT: key management + compose & encrypt -->
+            <div class="area-left">
+                <div style="margin-top:6px"><strong>Compose & Encrypt</strong></div>
+                <div class="panel" style="display:flex;flex-direction:column;gap:8px">
+                    <div>
+                        <label for="toUser">Encrypt to</label>
+                        <select id="toUser">
+                            {% for u in users %}
+                            <option value="{{ u }}">{{ u|capitalize }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+
+                    <div>
+                        <label for="plaintext">Message</label>
+                        <textarea id="plaintext" placeholder="Type message here..."></textarea>
+                    </div>
+
+                    <div class="toolbar">
+                        <button id="btnEncrypt" class="btn btn-primary pill">Encrypt & Send</button>
+                    </div>
+
+                    <div>
+                        <label>Transport bundle (copy/paste)</label>
+                        <textarea id="transport" class="box mono" rows="6"></textarea>
+                    </div>
+                </div>
+            </div>
+
+            <!-- RIGHT: receive & decrypt -->
+            <div class="area-right">
+                <div style="margin-bottom:10px"><strong>Receive & Decrypt</strong></div>
+                <div class="panel" style="display:flex;flex-direction:column;gap:8px">
+                    <label for="received">Transport bundle</label>
+                    <textarea id="received" class="box mono" rows="6"></textarea>
+
+                    <div class="toolbar">
+                        <button id="btnDecrypt" class="btn btn-primary pill">Verify & Decrypt</button>
+                    </div>
+
+                    <div>
+                        <label>Plaintext output</label>
+                        <pre id="plaintextOut" class="box mono"></pre>
+                    </div>
+                </div>
+            </div>
+
+            <!-- full width logs -->
+            <div class="area-logs">
+                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+                    <strong>Logs</strong>
+                    <div class="small">Action history</div>
+                </div>
+                <div class="panel">
+                    <pre id="log" class="box-wide mono"></pre>
+                </div>
+            </div>
+        </div>
+
+        <footer style="margin-top:12px">
+            <div class="small">Classroom demo — not for production use. Use HTTPS and proper key storage in a real app.</div>
+        </footer>
+    </div>
+</div>
+
+<script src="{{ url_for('static', filename='script.js') }}"></script>
+</body>
+</html>
