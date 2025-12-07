@@ -1,6 +1,7 @@
 /* === Privacy & visibility flags === */
 const REDACT_SENSITIVE = true;  // keep true in production (never show nonce/AAD values)
 const SHOW_LOGS_PANEL = true;
+let dosHistory = [];  // keeps last few DoS simulations
 
 const $ = id => document.getElementById(id);
 
@@ -10,6 +11,49 @@ const setStatus = (msg, cls = "") => {
     s.textContent = msg;
     s.className = "status " + cls;
 };
+
+function renderDosStats(){
+    const body = $("dosStatsBody");
+    if (!body) return;
+
+    if (!dosHistory.length){
+        body.textContent = "No DoS simulation run yet.";
+        return;
+    }
+
+    const last = dosHistory[dosHistory.length - 1];
+    // classify load by duration
+    let level = "Normal";
+    if (last.duration_ms > 500 && last.duration_ms <= 2000) level = "High";
+    if (last.duration_ms > 2000) level = "Critical";
+
+    // Build a small summary + history table
+    let html = "";
+    html += `<div>Last run: <b>${last.count}</b> requests in <b>${last.duration_ms} ms</b> `
+        +  `(avg <b>${last.avg_ms} ms</b> per request). Load level: <b>${level}</b>.</div>`;
+
+    html += `<div style="margin-top:6px;">Recent runs:</div>`;
+    html += `<table style="width:100%; margin-top:4px; border-collapse:collapse; font-size:12px;">`;
+    html += `<tr style="border-bottom:1px solid #e2e8f0;">
+            <th style="text-align:left; padding:2px 4px;">#</th>
+            <th style="text-align:left; padding:2px 4px;">Requests</th>
+            <th style="text-align:left; padding:2px 4px;">Total (ms)</th>
+            <th style="text-align:left; padding:2px 4px;">Avg (ms)</th>
+          </tr>`;
+
+    dosHistory.slice(-5).forEach((h, idx)=>{
+        html += `<tr>
+      <td style="padding:2px 4px;">${dosHistory.length - (dosHistory.slice(-5).length - idx) + 1}</td>
+      <td style="padding:2px 4px;">${h.count}</td>
+      <td style="padding:2px 4px;">${h.duration_ms}</td>
+      <td style="padding:2px 4px;">${h.avg_ms}</td>
+    </tr>`;
+    });
+    html += `</table>`;
+
+    body.innerHTML = html;
+}
+
 
 let CURRENT_USER = null;
 let ALL_USERS = [];
@@ -584,6 +628,104 @@ if (btnSubmitPhish){
         if ($("phishPass")) $("phishPass").value = "";
     });
 }
+
+/* ---------- DoS / Flood attack simulation ---------- */
+
+$("btnDos").addEventListener("click", async (ev)=>{
+    ev.preventDefault();
+
+    if (!CURRENT_USER){
+        setStatus("Log in first to simulate DoS from an authenticated client.", "err");
+        log("DoS simulation attempted without login.", "err");
+        return;
+    }
+
+    // Read count from input
+    let count = 100;
+    const inp = $("dosCount");
+    if (inp){
+        const parsed = parseInt(inp.value, 10);
+        if (!isNaN(parsed) && parsed > 0){
+            count = parsed;
+        }
+    }
+
+    const confirmRun = confirm(
+        "This will simulate a DoS-style flood of " + count +
+        " dummy encrypt operations on the server (simulation only).\n\n" +
+        "It may take a moment. Continue?"
+    );
+    if (!confirmRun) return;
+
+    setBusy(true);
+    setStatus("Simulating DoS flood…");
+    log(`Starting DoS simulation: ${count} dummy operations as user "${CURRENT_USER}".`, "warn");
+
+    try{
+        const r = await postJSON("/attack/dos", { count });
+        const j = await r.json();
+
+        if (!r.ok){
+            const errMsg = j.error || "DoS simulation failed.";
+            setStatus("DoS simulation error: " + errMsg, "err");
+            log(`DoS simulation error: ${errMsg}`, "err");
+            return;
+        }
+
+        if (j.blocked){
+            alert(
+                "DoS Mitigation Simulation:\n\n" +
+                "The server detected a large burst of requests and blocked them.\n\n" +
+                `Max allowed in one burst: ${j.max_allowed}\n` +
+                "This represents rate limiting / DoS protection."
+            );
+            log("DoS simulation: server-side rate limit triggered, flood was blocked.", "ok");
+            setStatus("DoS flood blocked by simulated rate limiting.", "ok");
+            return;
+        }
+
+        if (j.duration_ms > 2000){
+            log("DoS simulation: CRITICAL load – this would noticeably degrade service.", "err");
+        } else if (j.duration_ms > 500){
+            log("DoS simulation: HIGH load – system under stress.", "warn");
+        } else {
+            log("DoS simulation: normal load.", "info");
+        }
+
+        alert(
+            "DoS Simulation Complete:\n\n" +
+            `Simulated requests: ${j.simulated_requests}\n` +
+            `Total time: ${j.duration_ms} ms\n` +
+            `Average per request: ${j.avg_ms_per_request} ms\n\n` +
+            "This shows how flooding the server with many expensive operations can consume resources."
+        );
+
+        log(
+            `DoS simulation finished: ${j.simulated_requests} operations in ` +
+            `${j.duration_ms} ms (avg ${j.avg_ms_per_request} ms/op).`,
+            "warn"
+        );
+        log(j.note || "DoS note: See server defenses like rate limiting & monitoring.", "info");
+        setStatus("DoS simulation complete. See logs for details.", "warn");
+
+        // Save to history and update stats panel
+        dosHistory.push({
+            count: j.simulated_requests,
+            duration_ms: j.duration_ms,
+            avg_ms: j.avg_ms_per_request
+        });
+        renderDosStats();
+    }
+    catch(e){
+        const msg = String(e.message || e);
+        setStatus("DoS simulation error: " + msg, "err");
+        log("DoS simulation error: " + msg, "err");
+    }
+    finally{
+        setBusy(false);
+    }
+});
+
 
 /* ---------- Init ---------- */
 

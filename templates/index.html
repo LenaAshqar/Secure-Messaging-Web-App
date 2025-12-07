@@ -93,9 +93,28 @@
                 <button class="btn secondary" id="btnForgeSig" type="button">
                     Forge Signature (tamper bundle)
                 </button>
+                <input
+                        id="dosCount"
+                        type="number"
+                        min="1"
+                        max="1000"
+                        value="100"
+                        style="width:90px; margin-left:8px;"
+                        title="Number of simulated requests for DoS flood"
+                >
+                <button class="btn secondary" id="btnDos" type="button">
+                    Simulate DoS Flood
+                </button>
 
                 <button class="btn secondary" id="btnClear">Clear Logs</button>
                 <span class="status" id="status">Idle.</span>
+            </div>
+
+            <div id="dosStats" class="panel" style="margin-top:8px; font-size:13px;">
+                <b>DoS Simulation Stats:</b>
+                <div id="dosStatsBody">
+                    No DoS simulation run yet.
+                </div>
             </div>
         </form>
 

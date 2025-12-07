@@ -14,7 +14,7 @@ from encryptionUtility import (
 
 from attackUtility import (
     run_dictionary_attack,
-    pretty_print_attack_result
+    simulate_dos
 )
 
 
@@ -24,6 +24,7 @@ app = Flask(__name__)
 # Each user has: ECDH keypair + signing keypair + password
 USERS = {}
 MAX_FAILED_ATTEMPTS = 5  # lock account after 5 failed attempts
+MAX_DOS_OPS = 5000  # maximum allowed simulated DoS operations in one burst
 
 def create_user(username: str, password: str):
     ecdh_priv, ecdh_pub = generate_ecdh_keypair()
@@ -307,6 +308,44 @@ def simulate_dictionary_attack():
             "failed_attempts": info["failed_attempts"],
             "max_failed_attempts": MAX_FAILED_ATTEMPTS,
             "locked": info.get("locked", False),
+        })
+    except Exception as e:
+        return jsonify({"error": str(e)}), 400
+
+
+@app.route("/attack/dos", methods=["POST"])
+def simulate_dos_attack():
+    """
+    Use attackUtility.simulate_dos(...) to simulate a DoS/flood of crypto work.
+    """
+    try:
+        data = request.get_json(force=True)
+        count_raw = data.get("count", 50)
+        try:
+            count = int(count_raw)
+        except (TypeError, ValueError):
+            count = 50
+
+        result = simulate_dos(count, max_ops=MAX_DOS_OPS)
+
+        if result.blocked:
+            # Simulated rate limit hit
+            return jsonify({
+                "error": "Too many requests in a single burst. Rate limit triggered.",
+                "simulated_requests": result.simulated_requests,
+                "max_allowed": result.max_allowed,
+                "blocked": True,
+                "note": result.note,
+            }), 429
+
+        # Normal successful simulation
+        return jsonify({
+            "simulated_requests": result.simulated_requests,
+            "blocked": False,
+            "duration_ms": round(result.duration_seconds * 1000, 2),
+            "avg_ms_per_request": round(result.avg_seconds_per_request * 1000, 4),
+            "note": result.note,
+            "max_allowed": result.max_allowed,
         })
     except Exception as e:
         return jsonify({"error": str(e)}), 400

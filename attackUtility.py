@@ -9,9 +9,11 @@ First attack: Dictionary attack against weak passwords.
 This is for EDUCATIONAL USE ONLY within the ICS 344 project.
 Do NOT use this logic against real systems or real users.
 """
-
+import os
+import time
 from dataclasses import dataclass
 from typing import Dict, List, Optional
+from encryptionUtility import simulate_expensive_encrypt
 
 
 # This matches the structure in app.py:
@@ -170,3 +172,68 @@ def pretty_print_attack_result(result: DictionaryAttackResult) -> str:
         lines.append("Guessed password: (none)")
     lines.append(f"Tried passwords (in order): {result.tried_passwords}")
     return "\n".join(lines)
+
+@dataclass
+class DoSAttackResult:
+    simulated_requests: int
+    blocked: bool
+    duration_seconds: float
+    avg_seconds_per_request: float
+    note: str
+    max_allowed: int
+
+
+def simulate_dos(
+        count: int,
+        max_ops: int = 200,
+        message_size: int = 1024,
+) -> DoSAttackResult:
+    """
+    Simulate a DoS-style flood of expensive cryptographic operations.
+
+    - If 'count' exceeds 'max_ops', we *simulate* a rate limit and do not run any crypto.
+    - Otherwise, we perform 'count' ChaCha20-Poly1305 encrypt operations on dummy data
+      and measure how long it takes.
+
+    This is for EDUCATIONAL USE ONLY. Do not use as a real benchmark or attack tool.
+    """
+    if count <= 0:
+        count = 1
+
+    # Simulated rate limiting: server refuses overly large bursts
+    if count > max_ops:
+        return DoSAttackResult(
+            simulated_requests=0,
+            blocked=True,
+            duration_seconds=0.0,
+            avg_seconds_per_request=0.0,
+            note=(
+                f"Requested {count} operations, which exceeds the allowed "
+                f"burst limit of {max_ops}. Simulated rate limiting has blocked "
+                "this DoS attempt."
+            ),
+            max_allowed=max_ops,
+        )
+
+    plaintext = b"A" * message_size  # dummy payload
+
+    start = time.time()
+    for _ in range(count):
+        _ = simulate_expensive_encrypt(plaintext)
+    end = time.time()
+
+    duration = end - start
+    avg = duration / count if count else 0.0
+
+    return DoSAttackResult(
+        simulated_requests=count,
+        blocked=False,
+        duration_seconds=duration,
+        avg_seconds_per_request=avg,
+        note=(
+            "This simulates a DoS attack by flooding the server with many "
+            "expensive operations in a short time. Real systems should use "
+            "rate limiting, timeouts, and monitoring to detect and block this."
+        ),
+        max_allowed=max_ops,
+    )

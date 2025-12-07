@@ -96,3 +96,15 @@ def verify_signature(public_key, data: bytes, signature: bytes) -> bool:
         return True
     except InvalidSignature:
         return False
+
+
+def simulate_expensive_encrypt(plaintext: bytes):
+    """
+    Used ONLY for DoS simulation.
+    Uses your real ChaCha encryption routine so the CPU cost
+    reflects the actual crypto algorithm used by the system.
+    """
+    dummy_key = os.urandom(32)   # 256-bit key
+    ciphertext, _nonce = encrypt_with_key(dummy_key, plaintext, aad=None)
+    return ciphertext
+
