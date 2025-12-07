@@ -96,14 +96,27 @@ function setBusy(b){
 /* ---------- Card switching (login / app / fake phishing) ---------- */
 
 function showCard(cardId){
-    const ids = ["loginCard","appCard","phishFullCard"];
-    ids.forEach(id=>{
+    const mainIds = ["loginCard","appCard","phishFullCard"];
+    mainIds.forEach(id=>{
         const el = $(id);
         if (!el) return;
         if (id === cardId) el.classList.remove("hidden");
         else el.classList.add("hidden");
     });
+
+    // Attack/utility cards appear only when the main app is visible
+    const dosCard   = $("dosCard");
+    const phishCard = $("phishCard");
+
+    if (cardId === "appCard"){
+        if (dosCard)   dosCard.classList.remove("hidden");
+        if (phishCard) phishCard.classList.remove("hidden");
+    } else {
+        if (dosCard)   dosCard.classList.add("hidden");
+        if (phishCard) phishCard.classList.add("hidden");
+    }
 }
+
 
 /* ---------- Lock warning helpers ---------- */
 

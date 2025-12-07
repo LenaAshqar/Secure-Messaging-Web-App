@@ -45,7 +45,7 @@
 
         <div id="lockWarning" class="hidden"
              style="margin-top:12px; padding:10px; background:#ffcccc; color:#990000; border:1px solid #990000; border-radius:6px;">
-            ⚠️ This account is LOCKED due to too many failed login attempts.
+            ⚠ This account is LOCKED due to too many failed login attempts.
         </div>
     </div>
 
@@ -62,16 +62,18 @@
             <button class="btn secondary" id="btnLogout" type="button">Log out</button>
         </div>
 
+        <span class="status" id="status">Idle.</span>
+
         <form id="chatForm">
             <!-- 1) Compose box (encrypt only) -->
             <div>
-                <label for="compose">Compose Message / اكتب الرسالة</label>
+                <label for="compose">Compose Message </label>
                 <textarea id="compose" placeholder="Type your message here…"></textarea>
             </div>
 
             <div style="margin-top:8px">
                 <label for="recipient">Send to (recipient)</label>
-                <select id="recipient"></select>
+                <select id="recipient" style="width:90px; height:25px;"></select>
             </div>
 
             <!-- 2) Transport / bundle box -->
@@ -93,48 +95,8 @@
                 <button class="btn secondary" id="btnForgeSig" type="button">
                     Forge Signature (tamper bundle)
                 </button>
-                <input
-                        id="dosCount"
-                        type="number"
-                        min="1"
-                        max="1000"
-                        value="100"
-                        style="width:90px; margin-left:8px;"
-                        title="Number of simulated requests for DoS flood"
-                >
-                <button class="btn secondary" id="btnDos" type="button">
-                    Simulate DoS Flood
-                </button>
-
-                <button class="btn secondary" id="btnClear">Clear Logs</button>
-                <span class="status" id="status">Idle.</span>
-            </div>
-
-            <div id="dosStats" class="panel" style="margin-top:8px; font-size:13px;">
-                <b>DoS Simulation Stats:</b>
-                <div id="dosStatsBody">
-                    No DoS simulation run yet.
-                </div>
             </div>
         </form>
-
-        <!-- Phishing Simulation (email + link) -->
-        <div style="margin-top:18px">
-            <label>Phishing Attack Simulation</label>
-            <div class="panel" id="phishPanel" style="margin-top:4px; font-size:14px;">
-                Click <b>Show Fake Email</b> to see a realistic-looking phishing message.
-                Then click <b>Click Suspicious Link</b> to open the fake login page.
-            </div>
-
-            <div class="toolbar" style="margin-top:8px">
-                <button class="btn secondary" id="btnShowPhish" type="button">
-                    Show Fake Email
-                </button>
-                <button class="btn secondary" id="btnClickPhishLink" type="button">
-                    Click Suspicious Link
-                </button>
-            </div>
-        </div>
     </div>
 
     <!-- Full-page Fake Login Card (phishing) -->
@@ -143,7 +105,7 @@
             <div>
                 <h1 style="margin-bottom:0;">Secure Messenger Login</h1>
                 <div class="sub" style="margin-top:4px;">
-                    ⚠️ Phishing simulation — this is a fake login page used for training.
+                    ⚠ Phishing simulation — this is a fake login page used for training.
                 </div>
             </div>
             <button class="btn secondary" id="btnPhishBack" type="button">Back to app</button>
@@ -164,8 +126,8 @@
             </div>
 
             <div class="phish-warning">
-                This is a <b>FAKE</b> login page for a phishing simulation.
-                In a real attack, this page would silently steal credentials.
+                ⚠ This is a <b>FAKE</b> login page for a phishing simulation.
+                In a real attack, this page would silently steal your credentials.
             </div>
 
             <label class="phish-label" for="phishUser">Username</label>
@@ -191,10 +153,60 @@
         </div>
     </div>
 
-    <!-- Logs card (always visible) -->
+    <!-- DoS Simulation Card -->
+    <div class="card hidden" id="dosCard">
+        <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:8px;">
+            <h2 style="margin:0;">DoS / Flood Attack Simulation</h2>
+            <!-- inputs + button at the top-right -->
+            <div style="display:flex; align-items:center; gap:6px;">
+                <input
+                        id="dosCount"
+                        type="number"
+                        min="1"
+                        max="1000"
+                        value="100"
+                        style="width:90px;"
+                        title="Number of simulated requests for DoS flood"
+                >
+                <button class="btn secondary" id="btnDos" type="button">
+                    Simulate DoS Flood
+                </button>
+            </div>
+        </div>
+
+        <div id="dosStats" class="panel" style="font-size:13px;">
+            <b>DoS Simulation Stats:</b>
+            <div id="dosStatsBody">
+                No DoS simulation run yet.
+            </div>
+        </div>
+    </div>
+
+    <!-- Phishing Simulation Card -->
+    <div class="card hidden" id="phishCard">
+        <h2 style="margin-top:0;">Phishing Attack Simulation</h2>
+        <div class="panel" id="phishPanel" style="margin-top:4px; font-size:14px;">
+            Click <b>Show Fake Email</b> to see a realistic-looking phishing message.
+            Then click <b>Click Suspicious Link</b> to open the fake login page.
+        </div>
+
+        <div class="toolbar" style="margin-top:8px">
+            <button class="btn secondary" id="btnShowPhish" type="button">
+                Show Fake Email
+            </button>
+            <button class="btn secondary" id="btnClickPhishLink" type="button">
+                Click Suspicious Link
+            </button>
+        </div>
+    </div>
+
+    <!-- Logs card (always visible, with Clear Logs on title row) -->
     <div class="card" id="logsCard" style="margin-top:18px;">
         <div id="logsSection">
-            <label>Logs / السجل</label>
+            <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:8px;">
+                <label>Logs</label>
+                <button class="btn secondary" id="btnClear" type="button">Clear Logs</button>
+            </div>
             <div class="panel" id="logs" aria-live="polite"></div>
         </div>
     </div>
@@ -204,6 +216,6 @@
     </footer>
 </div>
 
-<script src="{{ url_for('static', filename='script.js') }}?v=5"></script>
+<script src="{{ url_for('static', filename='script.js') }}?v=6"></script>
 </body>
 </html>

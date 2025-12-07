@@ -15,7 +15,14 @@ body{
     min-height:100vh;
 }
 .wrap{max-width:1080px;margin:28px auto;padding:0 16px}
-.card{background:var(--card); border:1px solid var(--line); border-radius:18px; padding:22px; box-shadow:0 18px 50px rgba(42,64,120,.15)}
+.card{
+    background:var(--card);
+    border:1px solid var(--line);
+    border-radius:18px;
+    padding:22px;
+    margin-bottom:20px;
+    box-shadow:0 18px 50px rgba(42,64,120,.15)}
+
 h1{margin:0 0 6px; font-size:32px; font-weight:900; background:linear-gradient(90deg,#0b1220,#4a3aff); -webkit-background-clip:text; background-clip:text; color:transparent}
 .sub{color:var(--muted); margin-bottom:16px}
 
@@ -180,4 +187,17 @@ footer{margin:18px 0 6px; color:#7083a8; text-align:center; font-size:14px}
     margin-top:8px;
     font-size:11px;
     color:#94a3b8;
+}
+/* Center the full-page fake phishing login card */
+#phishFullCard:not(.hidden){
+    display:flex;
+    flex-direction:column;
+    justify-content:center;
+    align-items:center;
+}
+
+/* Optional: slightly limit width on very large screens */
+#phishFullCard .phish-card{
+    max-width:420px;
+    width:100%;
 }
