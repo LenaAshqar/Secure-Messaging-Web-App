@@ -3,7 +3,7 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width,initial-scale=1">
-    <title>Secure Messaging Demo</title>
+    <title>ChaCha20-Poly1305 — Secure Messaging Demo</title>
 
     <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
 </head>
@@ -34,24 +34,22 @@
         <div class="toolbar" style="margin-top:16px">
             <button class="btn" id="btnLogin">Enter</button>
 
-            <button class="btn secondary" id="btnDictAttack" type="button">
+            <button class="btn secondary" id="btnDictAttackLogin" type="button">
                 Dictionary Attack Attempt
             </button>
 
             <span class="status" id="loginStatus">
-                Enter username, password, then click Enter.
-            </span>
-
-            <div id="lockWarning" class="hidden"
-                 style="margin-top:12px; padding:10px; background:#ffcccc; color:#990000; border:1px solid #990000; border-radius:6px;">
-                ⚠️ This account is LOCKED due to too many failed login attempts.
-            </div>
-
+            Enter username, password, then click Enter.
+          </span>
         </div>
 
+        <div id="lockWarning" class="hidden"
+             style="margin-top:12px; padding:10px; background:#ffcccc; color:#990000; border:1px solid #990000; border-radius:6px;">
+            ⚠️ This account is LOCKED due to too many failed login attempts.
+        </div>
     </div>
 
-    <!-- App Card (hidden until login) -->
+    <!-- App Card (home/chat) -->
     <div class="card hidden" id="appCard">
         <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:8px;">
             <div>
@@ -67,7 +65,7 @@
         <form id="chatForm">
             <!-- 1) Compose box (encrypt only) -->
             <div>
-                <label for="compose">Compose Message</label>
+                <label for="compose">Compose Message / اكتب الرسالة</label>
                 <textarea id="compose" placeholder="Type your message here…"></textarea>
             </div>
 
@@ -93,17 +91,91 @@
                 <button class="btn secondary" id="btnVerify">Verify &amp; Decrypt</button>
 
                 <button class="btn secondary" id="btnForgeSig" type="button">
-                    Forge Signature (tamper with bundle)
+                    Forge Signature (tamper bundle)
                 </button>
 
                 <button class="btn secondary" id="btnClear">Clear Logs</button>
                 <span class="status" id="status">Idle.</span>
             </div>
-
         </form>
 
-        <div id="logsSection" style="margin-top:12px">
-            <label>Logs </label>
+        <!-- Phishing Simulation (email + link) -->
+        <div style="margin-top:18px">
+            <label>Phishing Attack Simulation</label>
+            <div class="panel" id="phishPanel" style="margin-top:4px; font-size:14px;">
+                Click <b>Show Fake Email</b> to see a realistic-looking phishing message.
+                Then click <b>Click Suspicious Link</b> to open the fake login page.
+            </div>
+
+            <div class="toolbar" style="margin-top:8px">
+                <button class="btn secondary" id="btnShowPhish" type="button">
+                    Show Fake Email
+                </button>
+                <button class="btn secondary" id="btnClickPhishLink" type="button">
+                    Click Suspicious Link
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Full-page Fake Login Card (phishing) -->
+    <div class="card hidden" id="phishFullCard">
+        <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:8px;">
+            <div>
+                <h1 style="margin-bottom:0;">Secure Messenger Login</h1>
+                <div class="sub" style="margin-top:4px;">
+                    ⚠️ Phishing simulation — this is a fake login page used for training.
+                </div>
+            </div>
+            <button class="btn secondary" id="btnPhishBack" type="button">Back to app</button>
+        </div>
+
+        <div class="phish-card">
+            <div class="phish-header">
+                <div class="phish-logo-circle">SM</div>
+                <div class="phish-brand">
+                    <div class="phish-title">Secure Messenger</div>
+                    <div class="phish-subtitle">Security Verification Portal</div>
+                </div>
+            </div>
+
+            <div class="phish-url-badge">
+                <span class="phish-dot"></span>
+                <span>http://secure-messenger-security-check.example.com/login</span>
+            </div>
+
+            <div class="phish-warning">
+                This is a <b>FAKE</b> login page for a phishing simulation.
+                In a real attack, this page would silently steal credentials.
+            </div>
+
+            <label class="phish-label" for="phishUser">Username</label>
+            <input id="phishUser" type="text" class="phish-input" placeholder="Enter your Secure Messenger username">
+
+            <label class="phish-label" for="phishPass">Password</label>
+            <input id="phishPass" type="password" class="phish-input" placeholder="Enter your password">
+
+            <div class="phish-row">
+                <label class="phish-remember">
+                    <input type="checkbox"> Remember this device
+                </label>
+                <a href="#" class="phish-link">Forgot password?</a>
+            </div>
+
+            <button class="btn phish-btn" id="btnSubmitPhish" type="button">
+                Verify Account
+            </button>
+
+            <div class="phish-footer-note">
+                * Notice: No HTTPS lock icon, strange domain name, and urgent language are all classic phishing signs.
+            </div>
+        </div>
+    </div>
+
+    <!-- Logs card (always visible) -->
+    <div class="card" id="logsCard" style="margin-top:18px;">
+        <div id="logsSection">
+            <label>Logs / السجل</label>
             <div class="panel" id="logs" aria-live="polite"></div>
         </div>
     </div>
@@ -113,6 +185,6 @@
     </footer>
 </div>
 
-<script src="{{ url_for('static', filename='script.js') }}?v=4"></script>
+<script src="{{ url_for('static', filename='script.js') }}?v=5"></script>
 </body>
 </html>

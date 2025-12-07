@@ -1,8 +1,9 @@
 /* === Privacy & visibility flags === */
 const REDACT_SENSITIVE = true;  // keep true in production (never show nonce/AAD values)
-const SHOW_LOGS_PANEL = true;   // set to false to hide the entire logs panel from users
+const SHOW_LOGS_PANEL = true;
 
 const $ = id => document.getElementById(id);
+
 const setStatus = (msg, cls = "") => {
     const s = $("status");
     if (!s) return;
@@ -20,7 +21,10 @@ if (!SHOW_LOGS_PANEL) {
     if (sec) sec.style.display = "none";
 }
 
-function now(){ const d=new Date(); return d.toLocaleTimeString(); }
+function now(){
+    const d=new Date();
+    return d.toLocaleTimeString();
+}
 
 function log(msg, type="info"){
     if (!SHOW_LOGS_PANEL) return;
@@ -30,22 +34,6 @@ function log(msg, type="info"){
     const area = $("logs");
     area.appendChild(line);
     area.scrollTop = area.scrollHeight;
-}
-
-// Slightly modify a Base64 string so that it stays valid, but becomes different.
-// This simulates an attacker forging or tampering with the signature.
-function forgeBase64Signature(sig) {
-    const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    if (!sig || sig.length === 0) return sig;
-
-    const lastChar = sig[sig.length - 1];
-    const idx = alphabet.indexOf(lastChar);
-    // If last char is not a normal Base64 char, just replace it with 'A'
-    if (idx === -1) return sig.slice(0, -1) + "A";
-
-    // Change it to the "next" char in the Base64 alphabet (wrap around)
-    const replacement = alphabet[(idx + 1) % alphabet.length];
-    return sig.slice(0, -1) + replacement;
 }
 
 async function postJSON(path, data){
@@ -61,6 +49,20 @@ function setBusy(b){
     if ($("btnVerify")) $("btnVerify").disabled = b;
 }
 
+/* ---------- Card switching (login / app / fake phishing) ---------- */
+
+function showCard(cardId){
+    const ids = ["loginCard","appCard","phishFullCard"];
+    ids.forEach(id=>{
+        const el = $(id);
+        if (!el) return;
+        if (id === cardId) el.classList.remove("hidden");
+        else el.classList.add("hidden");
+    });
+}
+
+/* ---------- Lock warning helpers ---------- */
+
 function showLockWarning() {
     const w = $("lockWarning");
     if (w) w.classList.remove("hidden");
@@ -71,7 +73,7 @@ function hideLockWarning() {
     if (w) w.classList.add("hidden");
 }
 
-/* ---------- User list & recipients ---------- */
+/* ---------- Load users (for recipient list) ---------- */
 
 async function loadUsers(){
     try{
@@ -79,6 +81,7 @@ async function loadUsers(){
         const j = await r.json();
         ALL_USERS = j.users || [];
         log("Loaded users from server: " + ALL_USERS.join(", "), "info");
+        updateRecipientOptions();
     }catch(e){
         const ls = $("loginStatus");
         if(ls) ls.textContent = "Error loading users: " + e.message;
@@ -144,22 +147,22 @@ $("btnLogin").addEventListener("click", async (ev)=>{
         return;
     }
 
-    // Call backend /login to verify username + password
     try{
         if (ls) ls.textContent = `Checking credentials for "${chosen}"…`;
         log(`Sending login request for username="${chosen}" to /login.`, "info");
 
         const r = await postJSON("/login", { username: chosen, password: pwd });
         const j = await r.json();
-        // if account is locked (either by prior attempts or result of this attempt)
-        if (j.locked) {
+
+        // Locked?
+        if (j.locked){
             showLockWarning();
-            if (ls) ls.textContent = "This account is locked.";
-            log(`Account "${chosen}" is currently locked by the system.`, "err");
+            const errMsg = j.error || "This account is locked.";
+            if (ls) ls.textContent = errMsg;
+            log(`Login failed for "${chosen}" — account is locked. Reason: ${errMsg}`, "err");
             return;
         }
 
-        // failed login (but NOT locked yet)
         if (!r.ok || !j.ok){
             hideLockWarning();
             const errMsg = j.error || "Login failed.";
@@ -168,25 +171,18 @@ $("btnLogin").addEventListener("click", async (ev)=>{
             return;
         }
 
-        // success
+        // Success
         hideLockWarning();
-
-        // Success: set current user
         CURRENT_USER = chosen;
         if (ls) ls.textContent = `Logged in as ${CURRENT_USER}.`;
         log(`Login successful for user "${CURRENT_USER}".`, "ok");
-
-        // Show app card, hide login card
-        const loginCard = $("loginCard");
-        const appCard = $("appCard");
-        if (loginCard) loginCard.classList.add("hidden");
-        if (appCard) appCard.classList.remove("hidden");
 
         const label = $("currentUserLabel");
         if (label) label.textContent = CURRENT_USER;
 
         updateRecipientOptions();
         setStatus("Idle.", "");
+        showCard("appCard");
     }
     catch(e){
         if (ls) ls.textContent = "Login error: " + e.message;
@@ -217,10 +213,7 @@ $("btnLogout").addEventListener("click", (ev)=>{
     const ls = $("loginStatus");
     if (ls) ls.textContent = "Enter username, password, then click Enter.";
 
-    const loginCard = $("loginCard");
-    const appCard = $("appCard");
-    if (loginCard) loginCard.classList.remove("hidden");
-    if (appCard) appCard.classList.add("hidden");
+    showCard("loginCard");
 });
 
 /* ---------- Encrypt & Send ---------- */
@@ -267,7 +260,7 @@ $("btnSend").addEventListener("click", async (ev)=>{
             ciphertext:j.ciphertext || "",
             nonce:     j.nonce || "",
             signature: j.signature || ""
-        });
+        }, null, 2);
         $("cipher").value = bundle;
 
         setStatus("Encrypted ✓","ok");
@@ -330,7 +323,6 @@ $("btnVerify").addEventListener("click", async (ev)=>{
         return;
     }
 
-    // The acting receiver is the CURRENT_USER (who is logged in)
     const receiver = CURRENT_USER;
 
     setBusy(true);
@@ -355,23 +347,31 @@ $("btnVerify").addEventListener("click", async (ev)=>{
         $("decrypted").value = j.plaintext || "";
         setStatus("Decrypted ✓","ok");
         log(`Decryption success. Acting receiver="${receiver}", original sender="${sender}".`, "ok");
-    }
-    catch(e){
+    }catch(e){
         const msg = String(e.message || e);
         setStatus("Error: " + msg, "err");
         log(`Decrypt error for actingReceiver="${receiver}", bundleSender="${sender}": ${msg}`, "err");
 
         if (msg.includes("wrong key or you are not the intended recipient")) {
-            log("This indicates that your key does not match the one used during encryption – you are not the intended recipient for this message.", "warn");
+            log("This indicates that your ECDH key does not match the one used for encryption – you are not the intended recipient.", "warn");
         }
-    }
-    finally{
+    }finally{
         setBusy(false);
     }
 });
 
+/* ---------- Clear logs ---------- */
+
+$("btnClear").addEventListener("click", (ev)=>{
+    ev.preventDefault();
+    if (SHOW_LOGS_PANEL) $("logs").innerHTML = "";
+    setStatus("Idle.");
+    log("Logs cleared by user.", "info");
+});
+
 /* ---------- Dictionary attack (simulate login attempts BEFORE login) ---------- */
-$("btnDictAttack").addEventListener("click", async (ev)=>{
+
+$("btnDictAttackLogin").addEventListener("click", async (ev)=>{
     ev.preventDefault();
 
     const usernameInput = $("loginUser");
@@ -397,8 +397,13 @@ $("btnDictAttack").addEventListener("click", async (ev)=>{
         const failCount = j.failed_attempts ?? 0;
         const maxFail = j.max_failed_attempts ?? 3;
 
+        if (locked) {
+            showLockWarning();
+        } else {
+            hideLockWarning();
+        }
+
         if (j.success){
-            // Attack guessed the password within allowed attempts
             alert(
                 `Dictionary Attack Succeeded!\n\n` +
                 `Target user: ${j.username}\n` +
@@ -414,7 +419,6 @@ $("btnDictAttack").addEventListener("click", async (ev)=>{
             log(`[DICT] Failed attempts recorded so far: ${failCount}/${maxFail}.`, locked ? "err" : "warn");
             setStatus("Dictionary attack succeeded (weak password).", "err");
         } else {
-            // Attack did not guess a password within remaining attempts
             alert(
                 `Dictionary Attack Failed.\n\n` +
                 `Target user: ${j.username}\n` +
@@ -425,18 +429,11 @@ $("btnDictAttack").addEventListener("click", async (ev)=>{
                     : `The account remains unlocked, but the attack did not succeed with this dictionary.`)
             );
 
-            if (j.locked === true) {
-                showLockWarning();
-            } else {
-                hideLockWarning();
-            }
-
             log(`[DICT] FAILED — could not guess password for "${j.username}".`, locked ? "warn" : "ok");
             log(`[DICT] Failed attempts recorded so far: ${failCount}/${maxFail}.`, locked ? "warn" : "info");
             setStatus("Dictionary attack attempt detected.", locked ? "err" : "warn");
         }
 
-        // Optional: log which passwords were tried
         if (Array.isArray(j.tried_passwords)) {
             log(`[DICT] Tried passwords: ${JSON.stringify(j.tried_passwords)}`, "info");
         }
@@ -446,6 +443,20 @@ $("btnDictAttack").addEventListener("click", async (ev)=>{
         log(`Dictionary attack error targeting "${username}": ${e.message}`, "err");
     }
 });
+
+/* ---------- Base64 signature forge helper ---------- */
+
+function forgeBase64Signature(sig) {
+    const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    if (!sig || sig.length === 0) return sig;
+
+    const lastChar = sig[sig.length - 1];
+    const idx = alphabet.indexOf(lastChar);
+    if (idx === -1) return sig.slice(0, -1) + "A";
+
+    const replacement = alphabet[(idx + 1) % alphabet.length];
+    return sig.slice(0, -1) + replacement;
+}
 
 /* ---------- Forged signature attack (tamper bundle) ---------- */
 
@@ -478,7 +489,6 @@ $("btnForgeSig").addEventListener("click", (ev)=>{
     const forgedSig = forgeBase64Signature(originalSig);
 
     if (forgedSig === originalSig){
-        // extremely unlikely, but just in case
         obj.signature = "FORGED_" + originalSig;
     } else {
         obj.signature = forgedSig;
@@ -491,18 +501,93 @@ $("btnForgeSig").addEventListener("click", (ev)=>{
     log("When you now click 'Verify & Decrypt', the backend should detect signature failure.", "info");
 });
 
+/* ---------- Phishing attack simulation ---------- */
 
-/* ---------- Clear logs ---------- */
+const btnShowPhish = $("btnShowPhish");
+if (btnShowPhish){
+    btnShowPhish.addEventListener("click", (ev)=>{
+        ev.preventDefault();
+        const panel = $("phishPanel");
+        if (!panel) return;
 
-$("btnClear").addEventListener("click", (ev)=>{
-    ev.preventDefault();
-    if (SHOW_LOGS_PANEL) $("logs").innerHTML = "";
-    setStatus("Idle.");
-    log("Logs cleared by user.", "info");
-});
+        panel.innerHTML =
+            '<div style="font-family:var(--mono); white-space:pre-wrap; font-size:13px;">' +
+            'From: <b>security@kfupm-it-support.com</b>\n' +
+            'To:   &lt;your_email@kfupm.edu.sa&gt;\n' +
+            'Subject: <b>URGENT: Account Suspension Notice</b>\n\n' +
+            'Dear user,\n\n' +
+            'We detected unusual activity on your Secure Messenger account.\n' +
+            'To avoid <b>immediate suspension</b>, please confirm your username and password\n' +
+            'by logging in at the following link within the next 15 minutes:\n\n' +
+            '  http://secure-messenger-security-check.example.com/login\n\n' +
+            'Failure to do so may result in <b>permanent loss of access</b>.\n\n' +
+            'Best regards,\n' +
+            'IT Security Team\n' +
+            '</div>';
+
+        log("Phishing email displayed. It uses urgency, fear, and a fake link to trick the user.", "warn");
+        setStatus("Phishing email shown in simulation.", "warn");
+    });
+}
+
+const btnClickPhishLink = $("btnClickPhishLink");
+if (btnClickPhishLink){
+    btnClickPhishLink.addEventListener("click", (ev)=>{
+        ev.preventDefault();
+        showCard("phishFullCard");
+        log("User clicked the suspicious link in the phishing email (simulation). Fake login page displayed.", "warn");
+        setStatus("Fake phishing login page visible.", "warn");
+    });
+}
+
+const btnPhishBack = $("btnPhishBack");
+if (btnPhishBack){
+    btnPhishBack.addEventListener("click", (ev)=>{
+        ev.preventDefault();
+        if (CURRENT_USER){
+            showCard("appCard");
+        } else {
+            showCard("loginCard");
+        }
+        log("User navigated back from fake phishing login to the main app.", "info");
+        setStatus("Returned from phishing simulation.", "ok");
+    });
+}
+
+const btnSubmitPhish = $("btnSubmitPhish");
+if (btnSubmitPhish){
+    btnSubmitPhish.addEventListener("click", (ev)=>{
+        ev.preventDefault();
+        const u = $("phishUser") ? $("phishUser").value.trim() : "";
+        const p = $("phishPass") ? $("phishPass").value.trim() : "";
+
+        if (!u && !p){
+            alert("In this simulation, enter some dummy username/password to see what happens.");
+            return;
+        }
+
+        alert(
+            "Phishing Simulation:\n\n" +
+            "You just entered credentials into a FAKE login page.\n\n" +
+            "In a real attack, the attacker would now have your username and password.\n" +
+            "Always check the URL, HTTPS lock icon, and sender before entering credentials."
+        );
+
+        log(
+            `PHISHING SIMULATION: User typed credentials into fake page. ` +
+            `Captured values (for demo only): username="${u}", password="${p}".`,
+            "err"
+        );
+        setStatus("User fell for phishing (simulation only).", "err");
+
+        if ($("phishUser")) $("phishUser").value = "";
+        if ($("phishPass")) $("phishPass").value = "";
+    });
+}
 
 /* ---------- Init ---------- */
 
 window.addEventListener("DOMContentLoaded", async ()=>{
-    await loadUsers();   // used to populate recipient list (not login)
+    showCard("loginCard");
+    await loadUsers();
 });
