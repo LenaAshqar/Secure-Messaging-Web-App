@@ -1,125 +1,172 @@
-"""Attack simulation helpers kept separate from the Flask view logic."""
+# attackUtility.py
+"""
+attackUtility.py
+----------------
+Helpers to simulate attacks on the secure messaging app.
 
-from datetime import datetime
-from pathlib import Path
-import encryptionUtility as eu
+First attack: Dictionary attack against weak passwords.
+
+This is for EDUCATIONAL USE ONLY within the ICS 344 project.
+Do NOT use this logic against real systems or real users.
+"""
+
+from dataclasses import dataclass
+from typing import Dict, List, Optional
 
 
-DOS_COUNTER = 0
-DOS_THRESHOLD = 5
+# This matches the structure in app.py:
+# USERS = {
+#   "Alice":   {"password": "alice123", ...},
+#   "Bob":     {"password": "bob123",   ...},
+#   "Charlie": {"password": "charlie123", ...},
+#   ...
+# }
+
+# Example small dictionary of common weak passwords
+COMMON_PASSWORDS: List[str] = [
+    "123456",
+    "password",
+    "123456789",
+    "qwerty",
+    "abc123",
+    "password1",
+    "111111",
+    "letmein",
+    "iloveyou",
+    "123123",
+    "alice123",   # intentionally includes your demo passwords
+    "bob123",
+    "charlie123",
+]
 
 
-def _load_dictionary_words(dict_path: Path) -> list[str]:
-    if not dict_path.exists():
-        return []
-    return [w.strip() for w in dict_path.read_text().splitlines() if w.strip()]
+@dataclass
+class DictionaryAttackResult:
+    username: str
+    success: bool
+    guessed_password: Optional[str]
+    attempts: int
+    tried_passwords: List[str]
+    remaining_passwords: int
+    note: str
 
 
-def dictionary_attack(target: str, credentials: dict[str, str], login_attempts: dict[str, int], dict_path: Path) -> dict:
-    words = _load_dictionary_words(dict_path)
-    attempted = words[:25]
-    found = False
-    for w in attempted:
-        if credentials.get(target) == w:
-            found = True
+def run_dictionary_attack(
+        username: str,
+        user_db: Dict[str, Dict],
+        wordlist: Optional[List[str]] = None,
+        max_attempts: Optional[int] = None,
+) -> DictionaryAttackResult:
+    """
+    Simulate a dictionary attack against the in-memory user_db.
+
+    Parameters
+    ----------
+    username : str
+        Target username to attack (must exist in user_db).
+    user_db : dict
+        The USERS structure from app.py, or any similar dict
+        where user_db[username]["password"] stores the clear-text password.
+        (In the real world you would NOT keep clear-text passwords.)
+    wordlist : list[str], optional
+        List of candidate passwords to try. If None, COMMON_PASSWORDS is used.
+    max_attempts : int, optional
+        Limit number of guesses (for simulating lockout). If None, try all.
+
+    Returns
+    -------
+    DictionaryAttackResult
+        Contains whether the attack succeeded, how many attempts were used,
+        which passwords were tried, and any extra notes.
+    """
+    if wordlist is None:
+        wordlist = COMMON_PASSWORDS
+
+    if username not in user_db:
+        return DictionaryAttackResult(
+            username=username,
+            success=False,
+            guessed_password=None,
+            attempts=0,
+            tried_passwords=[],
+            remaining_passwords=len(wordlist),
+            note=f"User '{username}' does not exist in user_db.",
+        )
+
+    target_password = user_db[username].get("password")
+    if target_password is None:
+        return DictionaryAttackResult(
+            username=username,
+            success=False,
+            guessed_password=None,
+            attempts=0,
+            tried_passwords=[],
+            remaining_passwords=len(wordlist),
+            note=f"User '{username}' has no 'password' field in user_db.",
+        )
+
+    tried: List[str] = []
+    attempts = 0
+    found_password: Optional[str] = None
+
+    for candidate in wordlist:
+        tried.append(candidate)
+        attempts += 1
+
+        if candidate == target_password:
+            found_password = candidate
             break
 
-    login_attempts[target] = login_attempts.get(target, 0) + len(attempted)
-    detected = found or login_attempts[target] > 8
+        if max_attempts is not None and attempts >= max_attempts:
+            break
 
-    return {
-        "attack": "dictionary",
-        "target": target,
-        "checked_words": attempted,
-        "password_matched": found,
-        "detected": detected,
-        "message": "Credential stuffing blocked" if detected else "Monitoring guesses",
-        "attempts_recorded": login_attempts[target],
-    }
+    success = found_password is not None
+    remaining = max(0, len(wordlist) - attempts)
 
-
-def _decode_bundle(bundle_json: dict) -> dict:
-    return {
-        "ciphertext": eu.ub64(bundle_json["ciphertext"]),
-        "nonce": eu.ub64(bundle_json["nonce"]),
-        "enc_session_key": eu.ub64(bundle_json["enc_session_key"]),
-        "wrap_nonce": eu.ub64(bundle_json["wrap_nonce"]),
-        "signature": eu.ub64(bundle_json["signature"]),
-        "sender_pub_pem": bundle_json["sender_pub_pem"].encode(),
-        "sender_ecdh_pub_pem": bundle_json["sender_ecdh_pub_pem"].encode(),
-        "timestamp": bundle_json.get("timestamp"),
-        "message_id": bundle_json.get("message_id"),
-    }
-
-
-def _signing_material(bundle: dict) -> bytes:
-    return (
-        bundle["ciphertext"]
-        + bundle["nonce"]
-        + bundle["enc_session_key"]
-        + bundle["wrap_nonce"]
-        + bundle["sender_ecdh_pub_pem"]
-    )
-
-
-def forged_signature_attack(messages: list[dict]) -> dict:
-    if messages:
-        bundle = _decode_bundle(messages[-1]["bundle"])
+    if success:
+        note = (
+            f"Dictionary attack SUCCESS for user '{username}'. "
+            f"Password guessed in {attempts} attempts."
+        )
     else:
-        fake_key = eu.generate_chacha_key()
-        ct, nonce = eu.encrypt_message_with_key(b"tamper", fake_key)
-        enc_key, wrap_nonce, sender_ecdh = eu.encrypt_session_key_ecdh(*eu.generate_ecdh_keypair(), fake_key)
-        rsa_priv, rsa_pub = eu.generate_rsa_keypair()
-        sig = eu.sign_bytes_rsa(rsa_priv, ct + nonce + enc_key + wrap_nonce + sender_ecdh)
-        bundle = {
-            "ciphertext": ct,
-            "nonce": nonce,
-            "enc_session_key": enc_key,
-            "wrap_nonce": wrap_nonce,
-            "signature": sig,
-            "sender_pub_pem": eu.serialize_public_key_to_pem(rsa_pub),
-            "sender_ecdh_pub_pem": sender_ecdh,
-            "timestamp": datetime.utcnow().isoformat(),
-            "message_id": "forgery-demo",
-        }
+        if max_attempts is not None and attempts >= max_attempts:
+            note = (
+                f"Dictionary attack stopped after reaching max_attempts={max_attempts} "
+                f"for user '{username}'. Password not found in tested range."
+            )
+        else:
+            note = (
+                f"Dictionary attack FAILED for user '{username}'. "
+                f"Password not present in provided dictionary."
+            )
 
-    sender_pub = eu.load_public_key_from_pem(bundle["sender_pub_pem"])
-    forged_signature = b"\x00" * len(bundle["signature"])
-    verified = eu.verify_signature_rsa(sender_pub, forged_signature, _signing_material(bundle))
-    detected = not verified
-
-    return {
-        "attack": "forged_signature",
-        "detected": detected,
-        "signature_valid": verified,
-        "message": "Forgery blocked by signature verification" if detected else "Forgery went unnoticed",
-    }
-
-
-def phishing_attack() -> dict:
-    lure = {
-        "from": "it-support@example.com",
-        "body": "Please reset your password at http://evil.example/reset",
-        "indicator": "Untrusted domain",
-    }
-    return {
-        "attack": "phishing",
-        "detected": True,
-        "message": "Suspicious domain detected. User warned and link disabled.",
-        "lure": lure,
-    }
-
-
-def dos_attack() -> tuple[dict, bool]:
-    global DOS_COUNTER
-    DOS_COUNTER += 1
-    alert = DOS_COUNTER >= DOS_THRESHOLD
-    return (
-        {
-            "attack": "denial_of_service",
-            "requests_seen": DOS_COUNTER,
-            "detected": alert,
-            "message": "Rate limit engaged" if alert else "Monitoring traffic volume",
-        },
-        alert,
+    return DictionaryAttackResult(
+        username=username,
+        success=success,
+        guessed_password=found_password,
+        attempts=attempts,
+        tried_passwords=tried,
+        remaining_passwords=remaining,
+        note=note,
     )
+
+
+def pretty_print_attack_result(result: DictionaryAttackResult) -> str:
+    """
+    Return a multi-line human-readable description of the dictionary attack result.
+    Useful for printing to console or logs.
+    """
+    lines = [
+        f"[Dictionary Attack Report]",
+        f"Target user: {result.username}",
+        f"Success: {result.success}",
+        f"Attempts used: {result.attempts}",
+        f"Remaining passwords in dictionary: {result.remaining_passwords}",
+        f"Note: {result.note}",
+    ]
+    if result.success:
+        lines.append(f"Guessed password: '{result.guessed_password}'")
+    else:
+        lines.append("Guessed password: (none)")
+    lines.append(f"Tried passwords (in order): {result.tried_passwords}")
+    return "\n".join(lines)

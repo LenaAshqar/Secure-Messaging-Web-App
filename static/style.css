@@ -1,203 +1,57 @@
-/* ========== THEME ==========
-   Drop-in colorful theme for login + index pages
-   ---------------------------------------------- */
 :root{
-    --bg1:#f6f9fc;
-    --gradA:#a78bfa;   /* violet */
-    --gradB:#22d3ee;   /* cyan   */
-    --gradC:#10b981;   /* emerald*/
-    --gradD:#fb7185;   /* rose   */
-    --ink:#0f172a;
-    --muted:#64748b;
-    --line:#e8eef7;
+    --bg:#f7fbff; --card:#ffffff; --ink:#0b1220; --muted:#5a6a88; --line:#e6ecf5;
+    --gradA: linear-gradient(135deg,#5ee7df,#b490ca);
+    --gradC: linear-gradient(135deg,#a1c4fd,#c2e9fb);
+    --mono: ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
 }
-
-/* ========= GLOBAL LAYOUT ========= */
-html,body{height:100%}
+*{box-sizing:border-box}
 body{
-    margin:0;
-    font-family:"Segoe UI",system-ui,-apple-system,Arial,sans-serif;
-    color:var(--ink);
+    margin:0; color:var(--ink);
+    font:16px/1.6 system-ui,-apple-system,"Segoe UI",Roboto,Arial;
     background:
-            radial-gradient(1200px 600px at 10% 0%, #c7f9ff40 0%, transparent 55%),
-            radial-gradient(900px 520px at 90% 15%, #f0d9ff3d 0%, transparent 60%),
-            linear-gradient(180deg,#f7fbff 0%, var(--bg1) 100%);
-    display:flex;justify-content:center;
-    padding:20px;
+            radial-gradient(60% 80% at 10% 5%, rgba(94,231,223,.35), transparent 60%),
+            radial-gradient(60% 80% at 90% 15%, rgba(162,197,251,.35), transparent 60%),
+            linear-gradient(180deg,#f7fbff 0%, #f3f9ff 100%);
+    min-height:100vh;
 }
+.wrap{max-width:1080px;margin:28px auto;padding:0 16px}
+.card{background:var(--card); border:1px solid var(--line); border-radius:18px; padding:22px; box-shadow:0 18px 50px rgba(42,64,120,.15)}
+h1{margin:0 0 6px; font-size:32px; font-weight:900; background:linear-gradient(90deg,#0b1220,#4a3aff); -webkit-background-clip:text; background-clip:text; color:transparent}
+.sub{color:var(--muted); margin-bottom:16px}
 
-/* ========= CONTAINER / CARD ========= */
-.wrap{width:100%;max-width:1080px;padding:18px}
-.card{
-    position:relative;
-    background:linear-gradient(180deg,#ffffff 0%, #fbfcff 100%);
-    border-radius:20px;
-    padding:24px;
-    border:1px solid var(--line);
-    box-shadow:
-            0 24px 60px rgba(79,70,229,.10),
-            0 10px 25px rgba(15,23,42,.06);
-}
-/* colorful rim glow */
-.card::before{
-    content:"";
-    position:absolute;inset:-2px;
-    z-index:-1;border-radius:22px;filter:blur(14px);
-    background:conic-gradient(from 180deg at 50% 50%,
-    #60a5fa, #22d3ee, #10b981, #f472b6, #a78bfa, #60a5fa);
-    opacity:.35;
-}
+.grid{display:grid; grid-template-columns:1fr 1fr; gap:18px}
+@media (max-width:900px){ .grid{grid-template-columns:1fr} }
 
-/* ========= TYPO ========= */
-h1{
-    margin:0 0 20px 0; font-size:28px; letter-spacing:.2px;
-    background:linear-gradient(90deg,#111827 0%, #4f46e5 40%, #14b8a6 100%);
-    -webkit-background-clip:text; background-clip:text; color:transparent;
+label{display:block; font-weight:900; margin:.45rem 0}
+textarea,input{
+    width:100%; background:#fff; border:2px solid var(--line); color:var(--ink);
+    border-radius:14px; padding:14px; font-size:15px; outline:none;
+    transition: box-shadow .15s ease, border-color .15s ease, transform .08s ease;
 }
-.sub{color:var(--muted); margin-bottom:18px}
+textarea{min-height:170px; resize:vertical}
+textarea::placeholder, input::placeholder{color:#a9b6cf}
+textarea:focus, input:focus{ border-color:#98b6ff; box-shadow:0 0 0 4px rgba(152,182,255,.18); transform:translateY(-1px) }
 
-/* ========= GRID  ========= */
-/*  key management (full width) then
-    two columns (left=key+compose, right=receive)
-    then attack simulations row (full width), then logs row (full width) */
-.grid {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    grid-template-rows: auto auto auto;
-    grid-gap: 18px;
-    grid-template-areas:
-    "keys keys"
-    "left right"
-    "left right"
-    "attacks attacks"
-    "logs logs";
-    align-items: start;
-}
-@media (max-width:980px){
-    .grid {
-        grid-template-columns: 1fr;
-        grid-template-areas:
-      "keys"
-      "left"
-      "right"
-      "attacks"
-      "logs";
-    }
-}
+.toolbar{display:flex; gap:12px; flex-wrap:wrap; align-items:center; margin-top:12px}
+.btn{appearance:none; border:0; cursor:pointer; color:#0b1220; padding:12px 18px; border-radius:14px; font-weight:900; box-shadow:0 12px 28px rgba(45,72,130,.18); transition:.15s ease; background:var(--gradA)}
+.btn.secondary{background:var(--gradC)}
+.btn:active{transform:translateY(1px)}
+.btn[disabled]{opacity:.6; cursor:not-allowed}
 
-/* child placement */
-.area-left   { grid-area: left; }
-.area-right  { grid-area: right; }
-.area-attacks { grid-area: attacks; }
-.area-logs   { grid-area: logs; }
-.area-keys   { grid-area: keys; }
+.status{font-weight:800; color:var(--muted); margin-left:auto}
+.ok{color:#16a34a} .err{color:#b91c1c}
 
-/* ========= LABELS / INPUTS ========= */
-label{display:block;margin-bottom:8px;color:#334155;font-weight:700}
-textarea, .form input, select{
-    /* fixed width so they don't expand beyond the intended layout */
-    width:420px;
-    max-width:100%;
-    padding:12px 14px;
-    border-radius:14px;
-    border:1px solid #dbe4f0;
-    background:#ffffff;
-    font-size:14px; outline:none;
-    box-shadow:inset 0 1px 0 rgba(255,255,255,.7);
-    transition:border .18s, box-shadow .18s, transform .06s;
-    resize:vertical;    /* allow manual vertical resize but not horizontal */
-    min-height:44px;
-}
-textarea{min-height:120px;resize:vertical}
-textarea:focus, .form input:focus, select:focus{
-    border-color:#93c5fd;
-    box-shadow:0 0 0 5px rgba(99,102,241,.12),
-    0 10px 24px rgba(34,211,238,.10) inset;
-}
-
-/* smaller fixed variant for the transport/received boxes */
-.box, pre.box, .mono-box {
-    width:420px;
-    max-width:100%;
-    background:#fbfcff;
-    border-radius:12px;
-    padding:10px;
-    border:1px solid var(--line);
-    min-height:80px;
-    overflow:auto;
-    font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,monospace;
-    color:#0f172a;
-}
-
-/* a variant for the larger message list and logs (allow slightly taller) */
-.box-wide {
-    width:100%;
-    max-width:100%;
-    min-height:140px;
-}
-
-/* ========= BUTTONS ========= */
-.toolbar{margin-top:10px;display:flex;gap:10px;align-items:center;flex-wrap:wrap}
-.btn{
-    border:0;cursor:pointer;font-weight:800;
-    padding:10px 16px;border-radius:999px;color:#fff;
-    letter-spacing:.2px;
-    box-shadow:0 14px 28px rgba(99,102,241,.18);
-    transition:transform .08s ease, filter .2s ease, box-shadow .2s ease;
-}
-.btn:active{ transform:translateY(1px) }
-.pill{ border-radius:999px }
-
-.btn-primary{
-    background:linear-gradient(90deg,var(--gradC),var(--gradB));
-}
-.btn-indigo{
-    background:linear-gradient(90deg,#6366f1,#60a5fa);
-}
-.btn-grey{
-    background:linear-gradient(90deg,#94a3b8,#64748b);
-}
-
-.btn:hover{
-    filter:saturate(1.15) brightness(1.03);
-    box-shadow:0 18px 34px rgba(34,211,238,.22);
-}
-
-/* ========= STATUS & LOGS ========= */
-.status{margin-left:6px;font-size:14px;color:#475569}
 .panel{
-    border:1px solid var(--line); border-radius:14px; background:#fbfcff;
-    min-height:100px; padding:12px;
-    font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,"Liberation Mono",monospace;
-    color:#0f172a; overflow:auto;
+    background:#fff; border:2px dashed var(--line); border-radius:14px; padding:12px;
+    max-height:220px; overflow:auto; font-family:var(--mono); font-size:13px;
+    white-space:pre-wrap; word-wrap:break-word;
 }
+.logline{margin:0}
+.log-ok{color:#166534}
+.log-warn{color:#b45309}
+.log-err{color:#991b1b}
 
-/* ========= LOGIN FORM ========= */
-.form{display:grid;gap:12px}
-.alert{
-    background:linear-gradient(90deg,#fecaca,#fde68a);
-    border:1px solid #fecaca; color:#7f1d1d;
-    padding:10px 12px;border-radius:12px;margin-bottom:12px;
-}
-.login-note{margin-top:10px;color:var(--muted);font-size:13px}
+footer{margin:18px 0 6px; color:#7083a8; text-align:center; font-size:14px}
+.mono{font-family:var(--mono)}
 
-/* ========= FOOTER ========= */
-footer{color:#90a3bc;text-align:center;font-size:12px;margin-top:16px}
-.mono{font-family:ui-monospace,Menlo,Monaco,Consolas,monospace}
-
-/* ========= UTILITIES ========= */
-.logout-row{margin-top:14px;text-align:right}
-.linklike{
-    background:none;border:none;color:#64748b;text-decoration:underline;cursor:pointer;
-    padding:0;font-size:14px
-}
-.linklike:hover{color:#374151}
-
-/* small layout helpers for the demo page */
-.header-row{display:flex;justify-content:space-between;align-items:center;margin-bottom:30px}
-.role-pill{background:linear-gradient(90deg,var(--gradA),var(--gradB));color:white;padding:8px 12px;border-radius:999px;font-weight:700}
-.small{font-size:13px;color:var(--muted); margin:20px 20px 20px 0;}
-.row{display:flex;gap:8px;align-items:center}
-.box{ /* make sure box uses fixed width as well */
-    box-sizing:border-box;
-}
+.hidden{display:none}

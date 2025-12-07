@@ -1,137 +1,118 @@
 <!doctype html>
-<html>
+<html lang="en" dir="ltr">
 <head>
-    <meta charset="utf-8" />
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
     <title>Secure Messaging Demo</title>
+
     <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
 </head>
+
 <body>
 <div class="wrap">
-    <div class="card">
-        <div class="header-row">
-            <div>
-                <h1 style="font-size:20px;margin-bottom:6px">Secure Webchat</h1>
-                <div class="small">Role: <span id="role" class="role-pill">{{ username|capitalize }}</span></div>
-            </div>
 
-            <div class="row">
-                <form id="logoutForm" action="{{ url_for('logout') }}" method="post" style="display:inline;">
-                    <button class="btn btn-grey pill" type="submit">Logout</button>
-                </form>
-            </div>
+    <!-- Login Card -->
+    <div class="card" id="loginCard">
+        <h1>Secure Messenger Login</h1>
+        <div class="sub">
+            Type the username and password to simulate login
+            (e.g., <code>Alice / alice123</code>, <code>Bob / bob123</code>, <code>Charlie / charlie123</code>).
         </div>
 
-        <!-- main grid  -->
-        <div class="grid">
+        <label for="loginUser">Username</label>
+        <input id="loginUser" type="text" placeholder="Enter username…">
 
-            <!-- key management -->
-            <div class="area-keys">
-                <div style="margin-bottom:10px"><strong>Key Management</strong></div>
-                <div class="panel" style="display:flex;flex-direction:column;gap:10px;margin-bottom:12px">
-                    <div class="row">
-                        <button id="btnMyPubkey" class="btn btn-primary pill">Show my public key</button>
-                        <button id="btnRegisterMyKey" class="btn btn-grey pill">Register my key</button>
-                    </div>
+        <label for="loginPassword" style="margin-top:8px;">Password</label>
+        <div style="display:flex; gap:8px; align-items:center;">
+            <input id="loginPassword" type="password" placeholder="Enter password…" style="flex:1;">
+            <label style="display:flex; align-items:center; gap:4px; font-size:13px;">
+                <input type="checkbox" id="togglePassword">
+                Show
+            </label>
+        </div>
 
-                    <div>
-                        <label for="otherUser">Other user</label>
-                        <select id="otherUser">
-                            {% for u in users %}
-                            <option value="{{ u }}">{{ u|capitalize }}</option>
-                            {% endfor %}
-                        </select>
-                        <div class="toolbar" style="margin-top:8px">
-                            <!-- <button id="btnGetPubkey" class="btn btn-primary pill">Get public key</button>-->
-                            <!-- <button id="btnReplacePubkey" class="btn btn-grey pill">Replace (attacker)</button>-->
-                        </div>
-                    </div>
+        <div class="toolbar" style="margin-top:16px">
+            <button class="btn" id="btnLogin">Enter</button>
 
-                    <!-- <pre id="pubkeyArea" class="box mono"></pre>-->
-                </div>
+            <button class="btn secondary" id="btnDictAttack" type="button">
+                Dictionary Attack Attempt
+            </button>
+
+            <span class="status" id="loginStatus">
+                Enter username, password, then click Enter.
+            </span>
+
+            <div id="lockWarning" class="hidden"
+                 style="margin-top:12px; padding:10px; background:#ffcccc; color:#990000; border:1px solid #990000; border-radius:6px;">
+                ⚠️ This account is LOCKED due to too many failed login attempts.
             </div>
 
+        </div>
 
-            <!-- LEFT: key management + compose & encrypt -->
-            <div class="area-left">
-                <div style="margin-top:6px"><strong>Compose & Encrypt</strong></div>
-                <div class="panel" style="display:flex;flex-direction:column;gap:8px">
-                    <div>
-                        <label for="toUser">Encrypt to</label>
-                        <select id="toUser">
-                            {% for u in users %}
-                            <option value="{{ u }}">{{ u|capitalize }}</option>
-                            {% endfor %}
-                        </select>
-                    </div>
+    </div>
 
-                    <div>
-                        <label for="plaintext">Message</label>
-                        <textarea id="plaintext" placeholder="Type message here..."></textarea>
-                    </div>
-
-                    <div class="toolbar">
-                        <button id="btnEncrypt" class="btn btn-primary pill">Encrypt & Send</button>
-                    </div>
-
-                    <div>
-                        <label>Transport bundle (copy/paste)</label>
-                        <textarea id="transport" class="box mono" rows="6"></textarea>
-                    </div>
-
-                    <div>
-                        <label>Latest ciphertext (ChaCha20-Poly1305)</label>
-                        <pre id="ciphertextDisplay" class="box mono"></pre>
-                    </div>
+    <!-- App Card (hidden until login) -->
+    <div class="card hidden" id="appCard">
+        <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:8px;">
+            <div>
+                <h1 style="margin-bottom:0;">ChaCha20-Poly1305 Secure Chat</h1>
+                <div class="sub" style="margin-top:4px;">
+                    Logged in as <b><span id="currentUserLabel">–</span></b>.
+                    Compose → <b>Encrypt &amp; Send</b>. Paste bundle → <b>Verify &amp; Decrypt</b>.
                 </div>
             </div>
+            <button class="btn secondary" id="btnLogout" type="button">Log out</button>
+        </div>
 
-            <!-- RIGHT: receive & decrypt -->
-            <div class="area-right">
-                <div style="margin-bottom:10px"><strong>Receive & Decrypt</strong></div>
-                <div class="panel" style="display:flex;flex-direction:column;gap:8px">
-                    <label for="received">Transport bundle</label>
-                    <textarea id="received" class="box mono" rows="6"></textarea>
-
-                    <div class="toolbar">
-                        <button id="btnDecrypt" class="btn btn-primary pill">Verify & Decrypt</button>
-                    </div>
-
-                    <div>
-                        <label>Plaintext output</label>
-                        <pre id="plaintextOut" class="box mono"></pre>
-                        <div id="signatureStatus" class="small"></div>
-                    </div>
-                </div>
+        <form id="chatForm">
+            <!-- 1) Compose box (encrypt only) -->
+            <div>
+                <label for="compose">Compose Message</label>
+                <textarea id="compose" placeholder="Type your message here…"></textarea>
             </div>
 
-            <!-- Attacks & detections -->
-            <div class="area-attacks">
-                <div style="margin-bottom:10px"><strong>Attack simulations</strong></div>
-                <div class="panel" style="display:flex;flex-direction:column;gap:10px">
-                    <div class="toolbar">
-                        <button id="btnDictionary" class="btn btn-grey pill">Dictionary attack</button>
-                        <button id="btnForge" class="btn btn-indigo pill">Forge signature</button>
-                        <button id="btnPhishing" class="btn btn-primary pill">Phishing attempt</button>
-                        <button id="btnDos" class="btn btn-grey pill">DoS burst</button>
-                    </div>
-                    <pre id="attackOutput" class="box-wide mono"></pre>
-                </div>
+            <div style="margin-top:8px">
+                <label for="recipient">Send to (recipient)</label>
+                <select id="recipient"></select>
             </div>
 
-            <!-- full width logs -->
-            <div class="area-logs">
-                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
-                    <strong>Logs</strong>
-                    <div class="small">Action history</div>
-                </div>
-                <div class="panel">
-                    <pre id="log" class="box-wide mono"></pre>
-                </div>
+            <!-- 2) Transport / bundle box -->
+            <div style="margin-top:16px">
+                <label for="cipher">Transport / Bundle (JSON)</label>
+                <textarea id="cipher" placeholder='After encrypt, we place a JSON bundle here: {"sender":"Alice","receiver":"Bob","ciphertext":"...","nonce":"...","signature":"..."} Paste this bundle to decrypt as the receiver.'></textarea>
             </div>
+
+            <!-- 3) Decrypted message box -->
+            <div style="margin-top:16px">
+                <label for="decrypted">Decrypted Message (receiver view)</label>
+                <textarea id="decrypted" placeholder="Decrypted message will appear here…" readonly></textarea>
+            </div>
+
+            <div class="toolbar">
+                <button class="btn" id="btnSend">Encrypt &amp; Send</button>
+                <button class="btn secondary" id="btnVerify">Verify &amp; Decrypt</button>
+
+                <button class="btn secondary" id="btnForgeSig" type="button">
+                    Forge Signature (tamper with bundle)
+                </button>
+
+                <button class="btn secondary" id="btnClear">Clear Logs</button>
+                <span class="status" id="status">Idle.</span>
+            </div>
+
+        </form>
+
+        <div id="logsSection" style="margin-top:12px">
+            <label>Logs </label>
+            <div class="panel" id="logs" aria-live="polite"></div>
         </div>
     </div>
+
+    <footer>
+        Served by Flask at <span class="mono">http://127.0.0.1:8011/</span>.
+    </footer>
 </div>
 
-<script src="{{ url_for('static', filename='script.js') }}"></script>
+<script src="{{ url_for('static', filename='script.js') }}?v=4"></script>
 </body>
 </html>

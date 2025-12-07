@@ -1,446 +1,317 @@
-from flask import Flask, render_template, request, session, redirect, url_for, jsonify
-from datetime import datetime, timedelta
-import logging
-import hashlib
-import uuid
+from flask import Flask, render_template, request, jsonify
 import base64
-import encryptionUtility as eu   # cryptographic helpers
-import attackUtility as au       # attack simulations
-from pathlib import Path
 
-app = Flask(__name__, template_folder="templates", static_folder="static")
-app.secret_key = "demo-secret-key-change-me"
-logging.basicConfig(level=logging.INFO)
+from encryptionUtility import (
+    encrypt_with_key,
+    decrypt_with_key,
+    generate_ecdh_keypair,
+    derive_shared_key,
+    generate_signing_keypair,
+    sign_data,
+    verify_signature,
+    serialize_public_key,
+)
 
-# -------------------------------------------------------
-# SERVER-SIDE key store (CRITICAL fix)
-# -------------------------------------------------------
-KEY_STORE = {}
-# username -> {"rsa_priv_pem": str, "rsa_pub_pem": str, "ecdh_priv_pem": str, "ecdh_pub_pem": str}
-
-# Public directory (used by sender)
-PUBLIC_KEYS = {}  # username -> {"signing": pem, "ecdh": pem}
-TRUSTED_FINGERPRINTS = {}      # username -> fingerprint of signing key (key pinning)
-MESSAGES = []                  # stored encrypted bundles
-DOS_COUNTER = 0
-LOGIN_ATTEMPTS = {}            # username -> counter to throttle dictionary attack
-
-USER_CREDENTIALS = {
-    "alice": "purple-alice",
-    "bob": "green-bob",
-    "mallory": "red-mallory",
-}
-
-VALID_USERS = list(USER_CREDENTIALS.keys())
+from attackUtility import (
+    run_dictionary_attack,
+    pretty_print_attack_result
+)
 
 
-# -------------------------------------------------------
-# Helpers
-# -------------------------------------------------------
-def fingerprint_pem(pem_str: str) -> str:
-    """Short fingerprint for key pinning."""
-    h = hashlib.sha256(pem_str.encode("utf-8")).hexdigest()
-    return h[:24]
+app = Flask(__name__)
 
+# --------- In-memory "users" for simulation ---------
+# Each user has: ECDH keypair + signing keypair + password
+USERS = {}
+MAX_FAILED_ATTEMPTS = 5  # lock account after 5 failed attempts
 
-def b64e(b: bytes) -> str:
-    return base64.b64encode(b).decode("utf-8")
-
-
-def b64d(s: str) -> bytes:
-    return base64.b64decode(s.encode("utf-8"))
-
-
-def ensure_user_keys(username: str):
-    """Make sure the user has signing/ECDH keys; create on demand."""
-    existing = KEY_STORE.get(username)
-    if existing and existing.get("rsa_priv_pem") and existing.get("ecdh_priv_pem"):
-        return
-
-    rsa_priv, rsa_pub = eu.generate_rsa_keypair()
-    ecdh_priv, ecdh_pub = eu.generate_ecdh_keypair()
-
-    KEY_STORE[username] = {
-        "rsa_priv_pem": eu.serialize_private_key_to_pem(rsa_priv).decode(),
-        "rsa_pub_pem": eu.serialize_public_key_to_pem(rsa_pub).decode(),
-        "ecdh_priv_pem": eu.serialize_private_key_to_pem(ecdh_priv).decode(),
-        "ecdh_pub_pem": eu.serialize_public_key_to_pem(ecdh_pub).decode(),
+def create_user(username: str, password: str):
+    ecdh_priv, ecdh_pub = generate_ecdh_keypair()
+    sign_priv, sign_pub = generate_signing_keypair()
+    USERS[username] = {
+        "password": password,      # demo only; never do plaintext in real systems
+        "ecdh_priv": ecdh_priv,
+        "ecdh_pub": ecdh_pub,
+        "sign_priv": sign_priv,
+        "sign_pub": sign_pub,
+        "failed_attempts": 0,      # number of bad login tries
+        "locked": False,           # whether the account is locked
     }
 
-    PUBLIC_KEYS.setdefault(username, {})
-    PUBLIC_KEYS[username]["signing"] = KEY_STORE[username]["rsa_pub_pem"]
-    PUBLIC_KEYS[username]["ecdh"] = KEY_STORE[username]["ecdh_pub_pem"]
-    TRUSTED_FINGERPRINTS.setdefault(username, fingerprint_pem(KEY_STORE[username]["rsa_pub_pem"]))
-    app.logger.info(f"[KEYGEN] Generated signing/ECDH keys for {username} automatically.")
+# Pre-create three demo users (you can change passwords if you like)
+create_user("Alice",   "alice123")
+create_user("Bob",     "bob123")
+create_user("Charlie", "charlie123")
 
 
-for default_user in VALID_USERS:
-    ensure_user_keys(default_user)
 
-
-def make_transport_bundle(ct, nonce, esk, wrap_nonce, signature, sender_pub_pem, sender_ecdh_pub_pem, timestamp, message_id):
-    """A canonical JSON-safe bundle."""
-    return {
-        "ciphertext": b64e(ct),
-        "nonce": b64e(nonce),
-        "enc_session_key": b64e(esk),
-        "wrap_nonce": b64e(wrap_nonce),
-        "signature": b64e(signature),
-        "sender_pub_pem": sender_pub_pem,
-        "sender_ecdh_pub_pem": sender_ecdh_pub_pem,
-        "timestamp": timestamp,
-        "message_id": message_id
-    }
-
-
-def parse_transport_bundle(bundle_json):
-    """Decode a bundle back into bytes."""
-    return {
-        "ciphertext": b64d(bundle_json["ciphertext"]),
-        "nonce": b64d(bundle_json["nonce"]),
-        "enc_session_key": b64d(bundle_json["enc_session_key"]),
-        "wrap_nonce": b64d(bundle_json["wrap_nonce"]),
-        "signature": b64d(bundle_json["signature"]),
-        "sender_pub_pem": bundle_json["sender_pub_pem"],
-        "sender_ecdh_pub_pem": bundle_json["sender_ecdh_pub_pem"],
-        "timestamp": bundle_json.get("timestamp"),
-        "message_id": bundle_json.get("message_id")
-    }
-
-
-def signing_material_from_bundle(b):
-    """Both encrypt & decrypt use the *same* bytes for signatures."""
-    return b["ciphertext"] + b["nonce"] + b["enc_session_key"] + b["wrap_nonce"] + b["sender_ecdh_pub_pem"].encode()
-
-
-# -------------------------------------------------------
-# Disable caching
-# -------------------------------------------------------
-@app.after_request
-def add_header(resp):
-    resp.headers["Cache-Control"] = "no-store"
-    return resp
-
-
-# -------------------------------------------------------
-# LOGIN / SESSION
-# -------------------------------------------------------
 @app.route("/", methods=["GET"])
-def landing():
-    return render_template("login.html", users=VALID_USERS)
+def index():
+    """
+    Serve the main GUI. User selection happens client-side (login form).
+    """
+    return render_template("index.html")
 
+
+@app.route("/users", methods=["GET"])
+def list_users():
+    """
+    Expose list of usernames so the frontend can show them in login/recipient.
+    """
+    return jsonify({"users": list(USERS.keys())})
 
 @app.route("/login", methods=["POST"])
 def login():
-    username = request.form.get("username", "").strip().lower()
-    password = request.form.get("password", "")
-
-    if username not in VALID_USERS:
-        return render_template("login.html", users=VALID_USERS, error="Invalid username")
-
-    LOGIN_ATTEMPTS[username] = LOGIN_ATTEMPTS.get(username, 0) + 1
-    if LOGIN_ATTEMPTS[username] > 10:
-        app.logger.warning(f"[LOGIN-BLOCKED] Too many attempts for {username}; possible dictionary attack")
-        return render_template("login.html", users=VALID_USERS, error="Too many attempts detected. Please wait.")
-
-    if USER_CREDENTIALS[username] != password:
-        app.logger.warning(f"[LOGIN-FAIL] Bad password for {username}")
-        return render_template("login.html", users=VALID_USERS, error="Incorrect password")
-
-    # Successful login resets the counter
-    LOGIN_ATTEMPTS[username] = 0
-
-    session.clear()
-    session["logged_in"] = True
-    session["username"] = username
-    session["login_time"] = datetime.utcnow().isoformat()
-
-    ensure_user_keys(username)
-    app.logger.info(f"[LOGIN] {username} logged in; signing and ECDH keys ready.")
-    return redirect(url_for("app_page"))
-
-
-@app.route("/logout", methods=["POST"])
-def logout():
-    session.clear()
-    return redirect(url_for("landing"))
-
-
-@app.route("/app", methods=["GET"])
-def app_page():
-    if not session.get("logged_in"):
-        return redirect(url_for("landing"))
-    return render_template("index.html", username=session["username"], users=VALID_USERS)
-
-
-# -------------------------------------------------------
-# KEY MANAGEMENT
-# -------------------------------------------------------
-@app.route("/register/<username>", methods=["POST"])
-def register_pubkey(username):
-    if not session.get("logged_in"):
-        return jsonify({"error": "not logged in"}), 403
-
-    data = request.get_json(force=True)
-    signing_pem = data.get("signing_pub_pem")
-    ecdh_pem = data.get("ecdh_pub_pem")
-    if not signing_pem or not ecdh_pem:
-        return jsonify({"error": "missing public keys"}), 400
-
-    u = username.lower()
-    PUBLIC_KEYS[u] = {"signing": signing_pem, "ecdh": ecdh_pem}
-
-    if u not in TRUSTED_FINGERPRINTS:
-        TRUSTED_FINGERPRINTS[u] = fingerprint_pem(signing_pem)
-
-    app.logger.info(f"[PUBKEY] Registered public keys for {u} (fingerprint {TRUSTED_FINGERPRINTS[u]}).")
-    return jsonify({"ok": True, "fingerprint": TRUSTED_FINGERPRINTS[u]})
-
-
-@app.route("/pubkey/<username>", methods=["GET"])
-def get_pubkey(username):
-    u = username.lower()
-    p = PUBLIC_KEYS.get(u)
-    if not p:
-        return jsonify({"error": "no such user registered"}), 404
-    return jsonify({"pub_pem": p, "fingerprint": fingerprint_pem(p["signing"])})
-
-
-@app.route("/replace_pubkey/<username>", methods=["POST"])
-def replace_pubkey(username):
-    # MITM attack simulation
-    if not session.get("logged_in"):
-        return jsonify({"error": "not logged in"}), 403
-
-    data = request.get_json(force=True)
-    signing_pem = data.get("signing_pub_pem")
-    ecdh_pem = data.get("ecdh_pub_pem")
-    if not signing_pem or not ecdh_pem:
-        return jsonify({"error": "missing public keys"}), 400
-
-    u = username.lower()
-    PUBLIC_KEYS[u] = {"signing": signing_pem, "ecdh": ecdh_pem}
-
-    app.logger.warning(f"[MITM] Public keys for {u} replaced by attacker {session['username']}.")
-    return jsonify({"ok": True, "new_fingerprint": fingerprint_pem(signing_pem)})
-
-
-@app.route("/my_pubkey", methods=["GET"])
-def my_pubkey():
-    if not session.get("logged_in"):
-        return jsonify({"error": "not logged in"}), 403
-
-    username = session["username"]
-    ensure_user_keys(username)
-    pub_sign = KEY_STORE[username]["rsa_pub_pem"]
-    pub_ecdh = KEY_STORE[username]["ecdh_pub_pem"]
-    return jsonify({
-        "signing_pub_pem": pub_sign,
-        "ecdh_pub_pem": pub_ecdh,
-        "fingerprint": fingerprint_pem(pub_sign)
-    })
-
-
-# -------------------------------------------------------
-# MESSAGE ENCRYPTION
-# -------------------------------------------------------
-@app.route("/encrypt", methods=["POST"])
-def api_encrypt():
-    if not session.get("logged_in"):
-        return jsonify({"error": "not logged in"}), 403
-
+    """
+    Very simple login with lockout:
+    - checks username + password
+    - increments failed_attempts on wrong password
+    - locks account after MAX_FAILED_ATTEMPTS
+    """
     try:
         data = request.get_json(force=True)
-        plaintext = data.get("plaintext", "")
-        aad = data.get("aad")
-        receiver_username = data.get("receiver_username")
+        username = data.get("username")
+        password = data.get("password")
 
-        if not plaintext:
-            return jsonify({"error": "missing plaintext"}), 400
-        if not receiver_username:
-            return jsonify({"error": "missing receiver_username"}), 400
+        if not username or not password:
+            raise ValueError("Username and password are required.")
 
-        receiver_pub = PUBLIC_KEYS.get(receiver_username.lower())
-        if not receiver_pub:
-            return jsonify({"error": "receiver has no registered public key"}), 400
+        info = USERS.get(username)
+        if info is None:
+            raise ValueError("Unknown user.")
 
-        # Load keys
-        sender = session["username"]
-        ensure_user_keys(sender)
-        sender_priv_pem = KEY_STORE[sender]["rsa_priv_pem"]
-        sender_priv = eu.load_private_key_from_pem(sender_priv_pem.encode())
-        sender_pub_pem = KEY_STORE[sender]["rsa_pub_pem"]
+        # Check if account is locked
+        if info.get("locked"):
+            return jsonify({
+                "error": "Account is locked due to too many failed attempts.",
+                "locked": True,
+                "failed_attempts": info.get("failed_attempts", 0),
+                "max_failed_attempts": MAX_FAILED_ATTEMPTS,
+            }), 403
 
-        sender_ecdh_priv = eu.load_private_key_from_pem(KEY_STORE[sender]["ecdh_priv_pem"].encode())
-        sender_ecdh_pub_pem = KEY_STORE[sender]["ecdh_pub_pem"]
+        # Check password
+        if info["password"] != password:
+            info["failed_attempts"] = info.get("failed_attempts", 0) + 1
+            remaining = max(0, MAX_FAILED_ATTEMPTS - info["failed_attempts"])
 
-        receiver_ecdh_pub = eu.load_public_key_from_pem(receiver_pub["ecdh"].encode())
+            # Lock if threshold reached
+            if info["failed_attempts"] >= MAX_FAILED_ATTEMPTS:
+                info["locked"] = True
+                return jsonify({
+                    "error": "Account locked after too many failed login attempts.",
+                    "locked": True,
+                    "failed_attempts": info["failed_attempts"],
+                    "max_failed_attempts": MAX_FAILED_ATTEMPTS,
+                }), 403
 
-        # Build message
-        session_key = eu.generate_aes_key()
-        ct, nonce = eu.encrypt_message_with_key(
-            plaintext.encode(),
-            session_key,
-            aad.encode() if aad else None
-        )
-        enc_session_key, wrap_nonce, _ = eu.encrypt_session_key_ecdh(
-            sender_ecdh_priv, receiver_ecdh_pub, session_key
-        )
+            return jsonify({
+                "error": "Invalid password.",
+                "locked": False,
+                "failed_attempts": info["failed_attempts"],
+                "remaining_attempts": remaining,
+                "max_failed_attempts": MAX_FAILED_ATTEMPTS,
+            }), 401
 
-        signing_material = ct + nonce + enc_session_key + wrap_nonce + sender_ecdh_pub_pem.encode()
-        signature = eu.sign_bytes_rsa(sender_priv, signing_material)
-
-        ts = datetime.utcnow().isoformat()
-        msg_id = str(uuid.uuid4())
-
-        bundle = make_transport_bundle(
-            ct, nonce, enc_session_key, wrap_nonce, signature,
-            sender_pub_pem, sender_ecdh_pub_pem, ts, msg_id
-        )
-
-        MESSAGES.append({
-            "id": msg_id,
-            "from": sender,
-            "to": receiver_username,
-            "bundle": bundle,
-            "time": ts
-        })
-
-        app.logger.info(f"[ENCRYPT] {sender} encrypted message for {receiver_username}; ciphertext len={len(ct)} bytes.")
-
-        return jsonify(bundle)
-
-    except Exception as e:
-        app.logger.error(f"[ENCRYPT ERROR] {e}")
-        return jsonify({"error": str(e)}), 500
-
-
-# -------------------------------------------------------
-# MESSAGE DECRYPTION
-# -------------------------------------------------------
-@app.route("/decrypt", methods=["POST"])
-def api_decrypt():
-    if not session.get("logged_in"):
-        return jsonify({"error": "not logged in"}), 403
-
-    try:
-        raw = request.get_json(force=True)
-        bundle = parse_transport_bundle(raw)
-
-        receiver = session["username"]
-        ensure_user_keys(receiver)
-        receiver_ecdh_priv = eu.load_private_key_from_pem(KEY_STORE[receiver]["ecdh_priv_pem"].encode())
-
-        sender_pub_pem = bundle["sender_pub_pem"]
-        sender_pub = eu.load_public_key_from_pem(sender_pub_pem.encode())
-        sender_ecdh_pub = eu.load_public_key_from_pem(bundle["sender_ecdh_pub_pem"].encode())
-
-        # Verify signature
-        signing_material = signing_material_from_bundle(bundle)
-        signature_valid = eu.verify_signature_rsa(sender_pub, bundle["signature"], signing_material)
-        if not signature_valid:
-            app.logger.warning("[VERIFY] Signature verification failed - possible forgery.")
-            return jsonify({"error": "signature verification failed", "signature_valid": False}), 400
-
-        # Decrypt symmetric key
-        session_key = eu.decrypt_session_key_ecdh(
-            receiver_ecdh_priv,
-            sender_ecdh_pub,
-            bundle["enc_session_key"],
-            bundle["wrap_nonce"]
-        )
-
-        # Decrypt message
-        plaintext = eu.decrypt_message_with_key(
-            bundle["ciphertext"], bundle["nonce"], session_key
-        )
-
-        app.logger.info(f"[DECRYPT] {receiver} decrypted message {bundle.get('message_id')} (signature ok={signature_valid}).")
+        # Success → reset counters
+        info["failed_attempts"] = 0
+        info["locked"] = False
 
         return jsonify({
-            "plaintext": plaintext.decode(),
-            "timestamp": bundle["timestamp"],
-            "message_id": bundle["message_id"],
-            "signature_valid": signature_valid
+            "ok": True,
+            "locked": False,
+            "failed_attempts": 0,
+            "max_failed_attempts": MAX_FAILED_ATTEMPTS,
         })
-
     except Exception as e:
-        app.logger.error(f"[DECRYPT ERROR] {e}")
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": str(e)}), 400
 
 
-# -------------------------------------------------------
-# DEBUG ENDPOINT: encrypt → decrypt in one shot
-# -------------------------------------------------------
-@app.route("/roundtrip_test", methods=["GET"])
-def roundtrip():
-    """Test encryption/decryption without UI."""
-    sender = "alice"
-    receiver = "bob"
 
-    # must be logged in (just a helper)
-    return jsonify({"status": "not implemented for UI"})
-
-
-# -------------------------------------------------------
-# Attack simulations
-# -------------------------------------------------------
+@app.route("/pubkeys", methods=["GET"])
+def pubkeys():
+    """
+    Optional: expose public keys for inspection/debugging.
+    """
+    data = {}
+    for name, info in USERS.items():
+        data[name] = {
+            "ecdh_pub_pem": serialize_public_key(info["ecdh_pub"]).decode(),
+            "sign_pub_pem": serialize_public_key(info["sign_pub"]).decode(),
+        }
+    return jsonify(data)
 
 
-@app.route("/simulate/dictionary", methods=["GET"])
-def simulate_dictionary():
-    if not session.get("logged_in"):
-        return jsonify({"error": "not logged in"}), 403
+# --------- Encrypt + Sign (sender side) ---------
 
-    target = request.args.get("target", session.get("username", "alice"))
-    result = au.dictionary_attack(target, USER_CREDENTIALS, LOGIN_ATTEMPTS, Path(__file__).parent / "test.txt")
+@app.route("/encrypt", methods=["POST"])
+def encrypt_route():
+    try:
+        data = request.get_json(force=True)
+        sender = data.get("sender")
+        receiver = data.get("receiver")
+        plaintext = data.get("plaintext", "")
 
-    if result["detected"]:
-        app.logger.warning(f"[ATTACK] Dictionary attack detected targeting {target}; attempts={result['attempts_recorded']}")
-    else:
-        app.logger.info(f"[ATTACK] Dictionary simulation against {target}; no matches found")
+        if not sender or not receiver:
+            raise ValueError("Sender and receiver are required.")
+        if sender not in USERS or receiver not in USERS:
+            raise ValueError("Unknown sender or receiver.")
+        if not plaintext:
+            raise ValueError("No plaintext provided.")
 
-    return jsonify(result)
+        plaintext_bytes = plaintext.encode("utf-8")
 
+        # Derive shared session key using ECDH: sender's priv, receiver's pub
+        s_info = USERS[sender]
+        r_info = USERS[receiver]
+        session_key = derive_shared_key(s_info["ecdh_priv"], r_info["ecdh_pub"])
 
-@app.route("/simulate/forgery", methods=["GET"])
-def simulate_forgery():
-    if not session.get("logged_in"):
-        return jsonify({"error": "not logged in"}), 403
+        # Encrypt with ChaCha20-Poly1305
+        ciphertext, nonce = encrypt_with_key(session_key, plaintext_bytes, aad=None)
 
-    result = au.forged_signature_attack(MESSAGES)
-    if result["detected"]:
-        app.logger.warning("[ATTACK] Forged signature rejected by verifier")
-    else:
-        app.logger.info("[ATTACK] Forgery slipped through (unexpected)")
+        # Sign (ciphertext || nonce) with sender's signing private key
+        to_sign = ciphertext + nonce
+        signature = sign_data(s_info["sign_priv"], to_sign)
 
-    return jsonify(result)
-
-
-@app.route("/simulate/phishing", methods=["GET"])
-def simulate_phishing():
-    if not session.get("logged_in"):
-        return jsonify({"error": "not logged in"}), 403
-
-    result = au.phishing_attack()
-    app.logger.warning(f"[ATTACK] Phishing lure flagged ({result['lure']['indicator']})")
-    return jsonify(result)
-
-
-@app.route("/simulate/dos", methods=["GET"])
-def simulate_dos():
-    result, alert = au.dos_attack()
-    if alert:
-        app.logger.warning(f"[ATTACK] DoS burst count={result['requests_seen']} (threshold={au.DOS_THRESHOLD}) — throttling engaged")
-    else:
-        app.logger.info(f"[ATTACK] DoS burst count={result['requests_seen']}")
-
-    status = 429 if alert else 200
-    return jsonify(result), status
+        # Return bundle + metadata
+        return jsonify({
+            "sender": sender,
+            "receiver": receiver,
+            "ciphertext": base64.b64encode(ciphertext).decode(),
+            "nonce": base64.b64encode(nonce).decode(),
+            "signature": base64.b64encode(signature).decode()
+        })
+    except Exception as e:
+        return jsonify({"error": str(e)}), 400
 
 
-# -------------------------------------------------------
-# RUN
-# -------------------------------------------------------
+# --------- Verify + Decrypt (receiver side) ---------
+
+@app.route("/decrypt", methods=["POST"])
+def decrypt_route():
+    try:
+        data = request.get_json(force=True)
+        sender   = data.get("sender")
+        receiver = data.get("receiver")  # acting user (logged in)
+
+        ct_b64   = data.get("ciphertext", "")
+        nonce_b64 = data.get("nonce", "")
+        sig_b64   = data.get("signature", "")
+
+        if not sender or not receiver:
+            raise ValueError("Sender and receiver are required.")
+        if sender not in USERS or receiver not in USERS:
+            raise ValueError("Unknown sender or receiver.")
+        if not ct_b64 or not nonce_b64 or not sig_b64:
+            raise ValueError("ciphertext, nonce, and signature are required.")
+
+        ciphertext = base64.b64decode(ct_b64)
+        nonce      = base64.b64decode(nonce_b64)
+        signature  = base64.b64decode(sig_b64)
+
+        s_info = USERS[sender]
+        r_info = USERS[receiver]
+
+        # 1) verify signature using sender's signing public key
+        to_sign = ciphertext + nonce
+        if not verify_signature(s_info["sign_pub"], to_sign, signature):
+            # integrity/authentication failure
+            raise ValueError("Signature verification failed (message was tampered or forged).")
+
+        # 2) derive the shared session key from ECDH
+        session_key = derive_shared_key(r_info["ecdh_priv"], s_info["ecdh_pub"])
+
+        # 3) decrypt with ChaCha20-Poly1305
+        try:
+            plaintext_bytes = decrypt_with_key(session_key, ciphertext, nonce, aad=None)
+        except Exception:
+            # Wrong key → almost always means “not the right recipient”
+            raise ValueError("Decryption failed: wrong key or you are not the intended recipient.")
+
+        return jsonify({"plaintext": plaintext_bytes.decode("utf-8", errors="ignore")})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 400
+
+
+
+# ----------- Attacks ------------
+
+# ---- Dictionary Attack -----
+@app.route("/attack/dictionary", methods=["POST"])
+def simulate_dictionary_attack():
+    """
+    Simulate a dictionary attack against the given username.
+    Uses USERS for password and lockout state. Each simulation
+    consumes failed_attempts just like real login attempts would.
+    """
+    try:
+        data = request.get_json(force=True)
+        username = data.get("username")
+
+        if not username:
+            return jsonify({"error": "username is required"}), 400
+
+        info = USERS.get(username)
+        if info is None:
+            return jsonify({"error": f"user '{username}' does not exist"}), 404
+
+        # If account is already locked, do not allow more guesses
+        if info.get("locked"):
+            return jsonify({
+                "success": False,
+                "username": username,
+                "attempts": 0,
+                "guessed_password": None,
+                "note": f"Account for '{username}' is already locked. No guesses allowed.",
+                "tried_passwords": [],
+                "remaining_passwords": 0,
+                "failed_attempts": info.get("failed_attempts", 0),
+                "max_failed_attempts": MAX_FAILED_ATTEMPTS,
+                "locked": True,
+            }), 200
+
+        current_failed = info.get("failed_attempts", 0)
+        remaining_allowed = MAX_FAILED_ATTEMPTS - current_failed
+        if remaining_allowed <= 0:
+            info["locked"] = True
+            return jsonify({
+                "success": False,
+                "username": username,
+                "attempts": 0,
+                "guessed_password": None,
+                "note": f"Account for '{username}' has reached maximum failed attempts and is now locked.",
+                "tried_passwords": [],
+                "remaining_passwords": 0,
+                "failed_attempts": info["failed_attempts"],
+                "max_failed_attempts": MAX_FAILED_ATTEMPTS,
+                "locked": True,
+            }), 200
+
+        # Run dictionary attack with limited attempts to simulate lockout
+        result = run_dictionary_attack(username, USERS, max_attempts=remaining_allowed)
+
+        # Consume the attempts in the user's failed_attempts counter
+        info["failed_attempts"] = current_failed + result.attempts
+
+        # Check if lockout is now reached
+        if info["failed_attempts"] >= MAX_FAILED_ATTEMPTS:
+            info["locked"] = True
+
+        return jsonify({
+            "success": result.success,
+            "username": result.username,
+            "attempts": result.attempts,
+            "guessed_password": result.guessed_password,
+            "note": result.note,
+            "tried_passwords": result.tried_passwords,
+            "remaining_passwords": result.remaining_passwords,
+            "failed_attempts": info["failed_attempts"],
+            "max_failed_attempts": MAX_FAILED_ATTEMPTS,
+            "locked": info.get("locked", False),
+        })
+    except Exception as e:
+        return jsonify({"error": str(e)}), 400
+
+
+
 if __name__ == "__main__":
-    app.run(host="127.0.0.1", port=8011, debug=True)
+    app.run(debug=True, port=8011)
